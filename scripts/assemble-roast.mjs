@@ -161,13 +161,10 @@ const musicPath = path.join(assetsDir, "music", track.file);
 const hasMusic = fs.existsSync(musicPath);
 if (!hasMusic) console.warn(`  ⚠ music bed missing: ${musicPath} — proceeding without`);
 
-function hasFontFile() {
-  const fontsDir = path.join(assetsDir, "fonts");
-  if (!fs.existsSync(fontsDir)) return false;
-  return fs.readdirSync(fontsDir).some((f) => /\.(ttf|otf)$/i.test(f));
-}
-const hasKaraoke = fs.existsSync(path.join(tmpDir, "karaoke.ass")) && hasFontFile();
-if (!hasKaraoke) console.warn("  ⚠ karaoke captions disabled (no font file in assets/fonts/) — slideshow will run without burned subs");
+// DejaVu Sans is pre-installed on Ubuntu GHA runners — no font file needed.
+// On macOS dev, fall back to the system fonts.
+const hasKaraoke = fs.existsSync(path.join(tmpDir, "karaoke.ass"));
+if (!hasKaraoke) console.warn("  ⚠ karaoke.ass not found — slideshow will run without burned subs");
 
 // ── FFmpeg invocation ───────────────────────────────────────────────────────
 
@@ -224,8 +221,9 @@ for (let i = 0; i < overlayPaths.length; i++) {
 
 let vmap = "[vmix]";
 if (hasKaraoke) {
+  // No fontsdir — libass uses system fonts. DejaVu Sans is on Ubuntu by default.
   filters.push(
-    `[vmix]subtitles=${path.join(tmpDir, "karaoke.ass")}:fontsdir=${path.join(assetsDir, "fonts")}[vsub]`,
+    `[vmix]subtitles=${path.join(tmpDir, "karaoke.ass")}[vsub]`,
   );
   vmap = "[vsub]";
 }

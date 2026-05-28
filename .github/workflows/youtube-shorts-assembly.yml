@@ -37,12 +37,15 @@ jobs:
           # Node 22+ has native WebSocket — Supabase realtime client needs it.
           node-version: "22"
 
-      - name: Install ffmpeg
-        # ubuntu-latest no longer ships ffmpeg by default.
+      - name: Install ffmpeg + fonts
+        # ubuntu-latest no longer ships ffmpeg by default; DejaVu fonts also
+        # need explicit install for libass karaoke subtitle rendering.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-dejavu fonts-dejavu-extra fontconfig
+          fc-cache -f
           ffmpeg -version | head -1
+          fc-list | grep -i "DejaVu Sans" | head -3
 
       - name: Install deps
         run: npm ci --omit=optional

@@ -32,8 +32,9 @@ const wts = JSON.parse(
 //   • OutlineColour = black, BorderStyle=1 = outline+drop shadow
 //   • Alignment 2 = bottom-center
 //   • MarginV 180 = ~bottom-third (1080×1920 canvas)
-//   • Komika Axis at 64pt — readable on phone screen, bold-feel without
-//     bold weight
+//   • DejaVu Sans Bold at 64pt — pre-installed on Ubuntu GHA runners so
+//     we skip the font-file commit. If we want Komika Axis later, drop
+//     the TTF in assets/fonts/ and swap the style name below.
 //
 // ASS colors are &HBBGGRR — BGR + alpha.
 
@@ -46,7 +47,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption, Komika Axis, 64, &H00FFFFFF, &H0000FFFF, &H00000000, &H00000000, 0, 0, 1, 4, 2, 2, 60, 60, 180, 1
+Style: Caption, DejaVu Sans, 64, &H00FFFFFF, &H0000FFFF, &H00000000, &H00000000, -1, 0, 1, 4, 2, 2, 60, 60, 180, 1
 
 [Events]
 Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
