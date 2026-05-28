@@ -154,13 +154,22 @@ for (let i = 1; i <= 5; i++) {
 
 // ── SFX cue list ────────────────────────────────────────────────────────────
 
+// Locate an SFX file by name — try common extensions in order of preference.
+function findSfx(name) {
+  for (const ext of [".mp3", ".wav", ".ogg"]) {
+    const p = path.join(assetsDir, "sfx", `${name}${ext}`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 const sfxCues = [];
 for (const t of beatTimings) {
   const sfx = t.beat.sfx;
   if (!sfx) continue;
-  const sfxPath = path.join(assetsDir, "sfx", `${sfx}.wav`);
-  if (!fs.existsSync(sfxPath)) {
-    console.warn(`  ⚠ SFX file missing, skipping: ${sfxPath}`);
+  const sfxPath = findSfx(sfx);
+  if (!sfxPath) {
+    console.warn(`  ⚠ SFX file missing, skipping: ${sfx}`);
     continue;
   }
   sfxCues.push({ path: sfxPath, at: t.start });

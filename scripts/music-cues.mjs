@@ -7,25 +7,28 @@
 //   2. Tap quarter-note positions in seconds
 //   3. Update the array below
 //
-// Tracks are at 90-95 BPM, so quarter notes ≈ 0.63-0.67s apart. The
-// assembler picks the track at random per video; the SAME track is used
-// for the full 32s, and cuts snap to that track's cues.
+// Tracks live in assets/music/. The 3 we committed:
+//   bed-1.mp3 — "tense" cinematic (Pixabay: nastelbom-tense)
+//   bed-2.mp3 — crime documentary (Pixabay: lemonmusiclab-crime-documentary)
+//   bed-3.mp3 — battle/action (Pixabay: cfl_turningpages-battle-on-route-30)
+//
+// All three are ~90-95 BPM. The cue arrays below are quarter-note grids
+// (not measured against the actual onsets — close enough for visual cuts
+// to feel beat-aligned).
 
 export const MUSIC_TRACKS = [
   {
-    file: "bed-lofi-tense.mp3",
+    file: "bed-1.mp3",
     bpm: 92,
-    // Quarter-note cues (seconds from start). 92 BPM = 0.652s/beat.
-    // First 64 beats (~42s) — enough headroom for a 32s Short.
     cues: Array.from({ length: 64 }, (_, i) => +(i * 0.652).toFixed(3)),
   },
   {
-    file: "bed-doc-tense.mp3",
+    file: "bed-2.mp3",
     bpm: 90,
     cues: Array.from({ length: 64 }, (_, i) => +(i * 0.667).toFixed(3)),
   },
   {
-    file: "bed-electronic-dark.mp3",
+    file: "bed-3.mp3",
     bpm: 95,
     cues: Array.from({ length: 64 }, (_, i) => +(i * 0.632).toFixed(3)),
   },
