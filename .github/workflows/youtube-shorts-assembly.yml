@@ -34,7 +34,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22+ has native WebSocket — Supabase realtime client needs it.
+          node-version: "22"
 
       - name: Install deps
         run: npm ci --omit=optional
