@@ -47,7 +47,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption, DejaVu Sans, 64, &H00FFFFFF, &H0000FFFF, &H00000000, &H00000000, -1, 0, 1, 4, 2, 2, 60, 60, 180, 1
+Style: Caption, DejaVu Sans, 60, &H00FFFFFF, &H0000FFFF, &H00000000, &H00000000, -1, 0, 1, 5, 3, 2, 80, 80, 480, 1
 
 [Events]
 Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
@@ -92,7 +92,9 @@ for (const beat of wts.per_beat) {
     const durSec = Math.max(0.1, end - start);
     const totalCs = Math.floor(durSec * 100);
 
-    // Distribute karaoke timing across the words in the phrase
+    // Distribute karaoke timing across the words in the phrase.
+    // Strip orphan leading punctuation from the first word (".start" / ",the"
+    // artifacts that arrive when tokenization splits mid-sentence).
     let text = "";
     for (let j = 0; j < phrase.length; j++) {
       const wordStart = phrase[j].time_sec - start;
@@ -101,9 +103,16 @@ for (const beat of wts.per_beat) {
           ? phrase[j + 1].time_sec - start
           : durSec;
       const wordCs = Math.max(1, Math.floor((wordEnd - wordStart) * 100));
-      text += `{\\k${wordCs}}${escapeAss(phrase[j].word)} `;
+      let word = phrase[j].word;
+      if (j === 0) {
+        // Strip leading punctuation from phrase-start word only
+        word = word.replace(/^[,;:.!?]+\s*/, "");
+      }
+      if (!word) continue; // entire word was punctuation
+      text += `{\\k${wordCs}}${escapeAss(word)} `;
     }
     text = text.trimEnd();
+    if (!text) continue; // skip empty phrase rows
     // Cap excessive duration
     const capEnd = start + Math.min(durSec, totalCs / 100);
     lines.push(

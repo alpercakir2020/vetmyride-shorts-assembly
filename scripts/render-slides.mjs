@@ -12,6 +12,7 @@
 //
 // Env: SITE_URL (defaults to https://vetmyride.com)
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -115,6 +116,45 @@ for (let i = 0; i < photoUrls.length; i++) {
 if (downloadedPhotos.length === 0) {
   console.error("No photos downloaded — assembly will fail without canvas");
   process.exit(1);
+}
+
+// ── Synthesize crop variants when only 1 photo is available ────────────────
+//
+// HoS entries without source_report_id come back with just the cover photo.
+// To get visual variety during the CATCH beat (faceless-creator-expert flagged
+// 15s of pixel-identical frames as the #1 retention killer), we generate 3
+// synthetic crops of the same photo via ffmpeg: wide / left-half / right-half.
+// Each becomes its own "photo" in the manifest so the assembler can cycle
+// through them like a multi-camera shoot.
+//
+// Skipped when we already have >=4 real photos (multi-photo entries don't
+// need synthesized variety).
+
+if (downloadedPhotos.length < 4) {
+  const cover = downloadedPhotos[0].path;
+  console.log(`\nOnly ${downloadedPhotos.length} real photo(s) — synthesizing crop variants from cover`);
+  const variants = [
+    // Each: [name, crop_filter] — crops applied to the 800×600 source
+    { name: "variant-left", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:0:0" },
+    { name: "variant-right", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080):0" },
+    { name: "variant-zoomed", filter: "scale=1620:2880:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:(ih-1920)/2" },
+  ];
+  for (const v of variants) {
+    const outPath = path.join(photosDir, `${v.name}.jpg`);
+    const res = spawnSync("ffmpeg", [
+      "-y", "-i", cover,
+      "-vf", v.filter,
+      "-frames:v", "1", "-q:v", "3",
+      outPath,
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    if (res.status === 0 && fs.existsSync(outPath)) {
+      const sz = fs.statSync(outPath).size;
+      downloadedPhotos.push({ index: downloadedPhotos.length, path: outPath, size: sz });
+      console.log(`  ✓ synthesized ${v.name} → ${outPath}  (${(sz / 1024).toFixed(1)} KB)`);
+    } else {
+      console.warn(`  ⚠ failed to synthesize ${v.name}`);
+    }
+  }
 }
 
 fs.writeFileSync(

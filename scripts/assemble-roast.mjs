@@ -225,11 +225,18 @@ for (const cue of sfxCues) {
 
 const filters = [];
 
-// Canvas: static scale + crop. zoompan was crashing with concat + image
-// stills ("Failed to configure output pad on Parsed_zoompan"). Re-add
-// motion via a different approach in the next iteration.
+// Canvas with gentle drift motion. Scale source to a slightly oversized
+// canvas (1188×2112 = 110%) then crop a moving 1080×1920 window across
+// the duration. zoompan crashes with concat-of-image-stills inputs, but
+// scale+crop with time-keyed expressions works reliably.
+//
+// Pan diagonally — x drifts left-to-right, y drifts top-to-bottom — over
+// the full duration. Total visual drift ~108px over 33s = barely
+// perceptible per-frame but kills the "static slideshow" signal.
+const PAN_X_RANGE = 108; // (1188-1080)
+const PAN_Y_RANGE = 192; // (2112-1920)
 filters.push(
-  `[0:v]fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg]`,
+  `[0:v]fps=30,scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112,setsar=1,crop=1080:1920:x='${PAN_X_RANGE}*t/${totalDuration.toFixed(3)}':y='${PAN_Y_RANGE}*t/${(totalDuration * 2).toFixed(3)} + ${PAN_Y_RANGE / 4}'[bg]`,
 );
 
 // ── Overlay layers with fade-in / fade-out animation ──────────────────────
@@ -294,8 +301,10 @@ for (let i = 0; i < sfxIndices.length; i++) {
 const audioLabels = ["[a_tts]"];
 if (hasMusic) audioLabels.push("[a_music]");
 for (let i = 0; i < sfxIndices.length; i++) audioLabels.push(`[a_sfx${i}]`);
+// Loudnorm to -14 LUFS (Shorts shelf broadcast target). Without this the
+// video sounds thin sandwiched between TikTok-imports averaging -8 LUFS.
 audioChunks.push(
-  `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,atrim=duration=${totalDuration.toFixed(3)}[aout]`,
+  `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,loudnorm=I=-14:LRA=11:TP=-1.5,atrim=duration=${totalDuration.toFixed(3)}[aout]`,
 );
 
 filters.push(audioChunks.join(";"));
