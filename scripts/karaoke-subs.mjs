@@ -67,9 +67,16 @@ function fmtTime(seconds) {
   return `${h}:${String(m).padStart(2, "0")}:${s.padStart(5, "0")}`;
 }
 
+// Skip captions on beats 4 (verdict) + 5 (cta) — the report-card canvas
+// renders all the readable text natively. Captions on top of report
+// data is double-print noise. Beats 1-3 (HOOK/SETUP/CATCH) get captions
+// because they sit over auction photos where text helps comprehension.
+const CAPTIONED_BEATS = new Set(["hook", "setup", "catch"]);
+
 const PHRASE_LEN = 4;
 const lines = [];
 for (const beat of wts.per_beat) {
+  if (!CAPTIONED_BEATS.has(beat.beat_id)) continue;
   const words = beat.words ?? [];
   if (words.length === 0) continue;
   const endSec = beat.end_sec ?? words[words.length - 1].time_sec + 0.4;
