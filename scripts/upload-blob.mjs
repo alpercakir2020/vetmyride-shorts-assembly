@@ -5,15 +5,15 @@
 // Usage:
 //   node scripts/upload-blob.mjs
 //
-// Env: VERCEL_BLOB_RW_TOKEN
+// Env: BLOB_READ_WRITE_TOKEN (standard @vercel/blob env var name).
 
 import { put } from "@vercel/blob";
 import fs from "node:fs";
 import path from "node:path";
 
-const token = process.env.VERCEL_BLOB_RW_TOKEN;
+const token = process.env.BLOB_READ_WRITE_TOKEN;
 if (!token) {
-  console.error("VERCEL_BLOB_RW_TOKEN not set");
+  console.error("BLOB_READ_WRITE_TOKEN not set");
   process.exit(1);
 }
 

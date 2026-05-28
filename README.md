@@ -52,7 +52,7 @@ You can also trigger manually from the Actions tab for smoke testing.
 |---|---|
 | `SUPABASE_URL` | Used by fetch-row + patch-row |
 | `SUPABASE_SERVICE_KEY` | Service-role key (RLS bypass) |
-| `VERCEL_BLOB_RW_TOKEN` | Read-write token for video + thumbnail uploads |
+| `BLOB_READ_WRITE_TOKEN` | Read-write token for video + thumbnail uploads (standard @vercel/blob env var) |
 | `GOOGLE_TTS_CREDENTIALS_B64` | Re-synthesizes TTS in GHA (avoids double-storing audio) |
 | `SITE_URL` | https://vetmyride.com — used by render-slides to hit the Satori endpoints |
 

@@ -21,7 +21,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      VERCEL_BLOB_RW_TOKEN: ${{ secrets.VERCEL_BLOB_RW_TOKEN }}
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
       GOOGLE_TTS_CREDENTIALS_B64: ${{ secrets.GOOGLE_TTS_CREDENTIALS_B64 }}
       YOUTUBE_TTS_VOICE: ${{ secrets.YOUTUBE_TTS_VOICE }}
       SITE_URL: ${{ secrets.SITE_URL }}
