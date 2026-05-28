@@ -66,10 +66,11 @@ for (let i = 0; i < beats.length; i++) {
   beatTimings.push({ id: beat.id, start, end, duration: end - start, beat });
   prevEnd = end;
 }
-// Add a smooth tail so the video doesn't clip mid-frame at audio end.
-const TAIL_SEC = 0.8;
-const totalDuration = prevEnd + TAIL_SEC;
-console.log(`Total duration: ${totalDuration.toFixed(2)}s (incl ${TAIL_SEC}s tail) using track ${track.file}`);
+// Don't extend past prevEnd — the concat demuxer can't extrapolate frames
+// past the last segment and zoompan throws "Error reinitializing filters".
+// Instead we apply fades IN the last 0.5s to land smoothly.
+const totalDuration = prevEnd;
+console.log(`Total duration: ${totalDuration.toFixed(2)}s using track ${track.file}`);
 
 // ── Per-beat photo assignment ───────────────────────────────────────────────
 
@@ -300,20 +301,19 @@ if (hasKaraoke) {
   );
   vmap = "[vsub]";
 }
-// Fade-to-black tail so the close lands smoothly instead of cutting.
+// Fade-to-black in the last 0.5s so the close lands smooth instead of cutting.
 const fadeStart = Math.max(0, totalDuration - 0.5);
 filters.push(`${vmap}fade=t=out:st=${fadeStart.toFixed(3)}:d=0.5[vfade]`);
 vmap = "[vfade]";
 
-// Audio mix
-// Fade out TTS during the tail so the narration doesn't cut abruptly.
-const ttsFadeStart = Math.max(0, prevEnd - 0.2);
-const audioChunks = [`[1:a]volume=1.0,afade=out:st=${ttsFadeStart.toFixed(3)}:d=0.6[a_tts]`];
+// Audio mix — fade out the last 0.45s so narration + music land smoothly.
+const audioFadeStart = Math.max(0, totalDuration - 0.45);
+const audioChunks = [`[1:a]volume=1.0,afade=out:st=${audioFadeStart.toFixed(3)}:d=0.45[a_tts]`];
 if (hasMusic) {
   const duckExpr = catchTiming
     ? `volume=enable='between(t,${catchTiming.start.toFixed(3)},${catchTiming.end.toFixed(3)})':volume=0.25,volume=enable='not(between(t,${catchTiming.start.toFixed(3)},${catchTiming.end.toFixed(3)}))':volume=0.13`
     : "volume=0.13";
-  audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${ttsFadeStart.toFixed(3)}:d=${(totalDuration - ttsFadeStart).toFixed(3)},atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
+  audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.45,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
 }
 for (let i = 0; i < sfxIndices.length; i++) {
   const s = sfxIndices[i];
