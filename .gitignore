@@ -1,0 +1,20 @@
+node_modules/
+tmp/
+*.mp4
+*.mp3
+*.wav
+.env
+.env.local
+.DS_Store
+
+# Don't commit downloaded SFX/music until we've reviewed licenses
+# (Pixabay/Mixkit are both free for commercial use, but verify per-asset)
+# Once verified, REMOVE the lines below to commit assets.
+assets/sfx/*.wav
+assets/sfx/*.mp3
+assets/music/*.mp3
+assets/music/*.wav
+assets/persona/*.png
+assets/persona/*.jpg
+assets/fonts/*.ttf
+assets/fonts/*.otf

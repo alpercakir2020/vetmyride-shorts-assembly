@@ -1,0 +1,18 @@
+{
+  "name": "vetmyride-shorts-assembly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch": "node scripts/fetch-row.mjs",
+    "synth": "node scripts/synthesize-tts.mjs",
+    "assemble:roast": "node scripts/assemble-roast.mjs",
+    "assemble:walkthrough": "node scripts/assemble-walkthrough.mjs",
+    "upload": "node scripts/upload-blob.mjs",
+    "patch": "node scripts/patch-row.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.4",
+    "@vercel/blob": "^2.3.3"
+  }
+}

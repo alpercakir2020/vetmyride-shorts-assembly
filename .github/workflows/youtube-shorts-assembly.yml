@@ -1,0 +1,104 @@
+name: YouTube Shorts assembly
+
+on:
+  workflow_dispatch:
+    inputs:
+      queue_id:
+        description: "youtube_video_queue row id (uuid)"
+        required: true
+        type: string
+
+# Single in-flight at a time per queue_id — prevents collision if Vercel
+# cron double-fires.
+concurrency:
+  group: youtube-${{ inputs.queue_id }}
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      VERCEL_BLOB_RW_TOKEN: ${{ secrets.VERCEL_BLOB_RW_TOKEN }}
+      GOOGLE_TTS_CREDENTIALS_B64: ${{ secrets.GOOGLE_TTS_CREDENTIALS_B64 }}
+      YOUTUBE_TTS_VOICE: ${{ secrets.YOUTUBE_TTS_VOICE }}
+      SITE_URL: ${{ secrets.SITE_URL }}
+      QUEUE_ID: ${{ inputs.queue_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci --omit=optional
+
+      - name: Mark row assembling
+        run: |
+          node scripts/patch-row.mjs "$QUEUE_ID" --status assembling --gha_run_id "$GITHUB_RUN_ID"
+
+      - name: Fetch row
+        run: node scripts/fetch-row.mjs "$QUEUE_ID"
+
+      - name: Detect format
+        id: format
+        run: |
+          fmt=$(node -e "console.log(require('./tmp/row.json').format)")
+          echo "value=$fmt" >> "$GITHUB_OUTPUT"
+
+      - name: Synthesize TTS
+        run: node scripts/synthesize-tts.mjs
+
+      - name: Build karaoke subs
+        run: node scripts/karaoke-subs.mjs
+
+      # ── Format A: Roast ─────────────────────────────────────────────────
+      - name: Render Satori slides (Format A)
+        if: steps.format.outputs.value == 'roast'
+        run: node scripts/render-slides.mjs
+
+      - name: Assemble roast video
+        if: steps.format.outputs.value == 'roast'
+        run: node scripts/assemble-roast.mjs
+
+      # ── Format B: Walkthrough ───────────────────────────────────────────
+      - name: Capture report sections (Format B)
+        if: steps.format.outputs.value == 'walkthrough'
+        run: node scripts/capture-report.mjs
+
+      - name: Assemble walkthrough video
+        if: steps.format.outputs.value == 'walkthrough'
+        run: node scripts/assemble-walkthrough.mjs
+
+      # ── Thumbnail + upload (both formats) ────────────────────────────────
+      - name: Render thumbnail
+        run: node scripts/render-thumbnail.mjs
+
+      - name: Upload to Vercel Blob
+        id: upload
+        run: |
+          out=$(node scripts/upload-blob.mjs | tail -1)
+          echo "video_url=$(echo "$out" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).video_url')" >> "$GITHUB_OUTPUT"
+          echo "thumbnail_url=$(echo "$out" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).thumbnail_url')" >> "$GITHUB_OUTPUT"
+
+      - name: Patch row → pending_review
+        run: |
+          duration=$(cat tmp/duration.txt)
+          node scripts/patch-row.mjs "$QUEUE_ID" \
+            --status pending_review \
+            --video_url "${{ steps.upload.outputs.video_url }}" \
+            --thumbnail_url "${{ steps.upload.outputs.thumbnail_url }}" \
+            --duration_sec "$duration"
+
+      # ── Error handler ───────────────────────────────────────────────────
+      - name: Patch row → error (on failure)
+        if: failure()
+        run: |
+          msg="${GITHUB_JOB} failed at ${GITHUB_RUN_NUMBER}. See $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          node scripts/patch-row.mjs "$QUEUE_ID" --status error --error_message "$msg" || true
