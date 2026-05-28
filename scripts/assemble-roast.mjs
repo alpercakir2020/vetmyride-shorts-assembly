@@ -97,7 +97,16 @@ const catchTiming = beatTimings.find((t) => t.id === "catch");
 const musicPath = path.join(assetsDir, "music", track.file);
 const hasMusic = fs.existsSync(musicPath);
 if (!hasMusic) console.warn(`  ⚠ music bed missing: ${musicPath} — proceeding without`);
-const hasKaraoke = fs.existsSync(path.join(tmpDir, "karaoke.ass")) && fs.existsSync(path.join(assetsDir, "fonts"));
+
+// Karaoke captions need libass + a font file. The fonts/ directory always
+// exists (has a README) so check for any actual .ttf|.otf file instead.
+function hasFontFile() {
+  const fontsDir = path.join(assetsDir, "fonts");
+  if (!fs.existsSync(fontsDir)) return false;
+  return fs.readdirSync(fontsDir).some((f) => /\.(ttf|otf)$/i.test(f));
+}
+const hasKaraoke = fs.existsSync(path.join(tmpDir, "karaoke.ass")) && hasFontFile();
+if (!hasKaraoke) console.warn("  ⚠ karaoke captions disabled (no font file in assets/fonts/) — slideshow will run without burned subs");
 
 // ── FFmpeg invocation ───────────────────────────────────────────────────────
 
@@ -172,9 +181,13 @@ args.push(
 
 console.log("ffmpeg " + args.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" "));
 
-const res = spawnSync("ffmpeg", args, { stdio: "inherit" });
+const res = spawnSync("ffmpeg", args, { stdio: ["ignore", "inherit", "inherit"] });
+if (res.error) {
+  console.error(`ffmpeg spawn error: ${res.error.message}`);
+  process.exit(1);
+}
 if (res.status !== 0) {
-  console.error(`ffmpeg failed with code ${res.status}`);
+  console.error(`ffmpeg failed with status=${res.status} signal=${res.signal}`);
   process.exit(1);
 }
 
