@@ -225,41 +225,11 @@ for (const cue of sfxCues) {
 
 const filters = [];
 
-// ── Canvas with per-beat Ken Burns motion ─────────────────────────────────
-//
-// Different framing per beat gives visual variety from a single photo:
-//   HOOK    — slow zoom-in (1.0 → 1.06)
-//   SETUP   — slight pan-right (1.05, x shift)
-//   CATCH   — dramatic zoom-in to bottom (1.0 → 1.20) — the dopamine beat
-//   VERDICT — pull back from CATCH (1.20 → 1.00) for the reveal
-//   CTA     — subtle drift (1.0 → 1.04)
-//
-// Expressed as piecewise time-keyed zoom on a single zoompan filter.
-
-const tHook = beatTimings[0].end;
-const tSetup = beatTimings[1].end;
-const tCatch = beatTimings[2].end;
-const tVerdict = beatTimings[3].end;
-
-// Piecewise zoom expression: lerp between fixed zoom points at beat boundaries
-function zoomExpr() {
-  // Each segment: if t in [a,b], z = za + (zb-za)*(t-a)/(b-a)
-  return (
-    `if(lt(t,${tHook.toFixed(3)}),` +
-    `1.0+0.06*(t/${tHook.toFixed(3)}),` +
-    `if(lt(t,${tSetup.toFixed(3)}),` +
-    `1.06-0.02*((t-${tHook.toFixed(3)})/${(tSetup - tHook).toFixed(3)}),` +
-    `if(lt(t,${tCatch.toFixed(3)}),` +
-    `1.04+0.16*((t-${tSetup.toFixed(3)})/${(tCatch - tSetup).toFixed(3)}),` +
-    `if(lt(t,${tVerdict.toFixed(3)}),` +
-    `1.20-0.20*((t-${tCatch.toFixed(3)})/${(tVerdict - tCatch).toFixed(3)}),` +
-    `1.0+0.04*((t-${tVerdict.toFixed(3)})/${(totalDuration - tVerdict).toFixed(3)})` +
-    `))))`
-  );
-}
-
+// Canvas: static scale + crop. zoompan was crashing with concat + image
+// stills ("Failed to configure output pad on Parsed_zoompan"). Re-add
+// motion via a different approach in the next iteration.
 filters.push(
-  `[0:v]fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,zoompan=z='${zoomExpr()}':d=1:s=1080x1920:fps=30[bg]`,
+  `[0:v]fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg]`,
 );
 
 // ── Overlay layers with fade-in / fade-out animation ──────────────────────
