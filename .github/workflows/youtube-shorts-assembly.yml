@@ -37,6 +37,13 @@ jobs:
           # Node 22+ has native WebSocket — Supabase realtime client needs it.
           node-version: "22"
 
+      - name: Install ffmpeg
+        # ubuntu-latest no longer ships ffmpeg by default.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+
       - name: Install deps
         run: npm ci --omit=optional
 
