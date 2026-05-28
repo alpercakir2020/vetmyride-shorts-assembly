@@ -1,12 +1,14 @@
-// Fetch the 5 vertical Satori slides from vetmyride.com for the current
-// queue row. Reads tmp/row.json (produced by fetch-row.mjs) and writes
-// tmp/slides/slide-{1..5}.jpg.
+// Fetch the 5 vertical Satori OVERLAY PNGs AND the auction photo set
+// from vetmyride.com.
 //
-// The Satori endpoint is rate-friendly (we hit it 5x, with cache headers
-// allowing s-maxage=86400) and renders 1080×1920 JPEGs at ~50 KB each.
+// Overlays are transparent 1080×1920 PNGs (one per beat).
+// Photos come from /api/youtube/photos and are the actual canvas
+// FFmpeg composites the overlays onto.
 //
-// Usage:
-//   node scripts/render-slides.mjs
+// Outputs:
+//   tmp/overlays/overlay-{1..5}.png   — transparent text/badge/chip layers
+//   tmp/photos/photo-{0..N}.jpg       — auction photos (1-15)
+//   tmp/photos/manifest.json          — { photos: [...], fallback: bool }
 //
 // Env: SITE_URL (defaults to https://vetmyride.com)
 
@@ -27,27 +29,80 @@ if (!slug) {
   process.exit(1);
 }
 
-const slidesDir = path.join(process.cwd(), "tmp", "slides");
-fs.mkdirSync(slidesDir, { recursive: true });
+const overlaysDir = path.join(process.cwd(), "tmp", "overlays");
+const photosDir = path.join(process.cwd(), "tmp", "photos");
+fs.mkdirSync(overlaysDir, { recursive: true });
+fs.mkdirSync(photosDir, { recursive: true });
+
+// ── Fetch Satori overlays ──────────────────────────────────────────────────
 
 const endpoint =
   format === "walkthrough"
     ? "youtube-walkthrough-slide"
     : "youtube-slide";
 
-console.log(`Fetching ${beatCount} slides from ${SITE_URL}/api/og/${endpoint}`);
+console.log(`Fetching ${beatCount} overlays from ${SITE_URL}/api/og/${endpoint}`);
 
 for (let beat = 1; beat <= beatCount; beat++) {
   const url = `${SITE_URL}/api/og/${endpoint}?slug=${encodeURIComponent(slug)}&beat=${beat}`;
   const res = await fetch(url);
   if (!res.ok) {
-    console.error(`  ✗ slide ${beat}: ${res.status} ${await res.text()}`);
+    console.error(`  ✗ overlay ${beat}: ${res.status} ${await res.text()}`);
     process.exit(1);
   }
   const buf = Buffer.from(await res.arrayBuffer());
-  const outPath = path.join(slidesDir, `slide-${beat}.jpg`);
+  const outPath = path.join(overlaysDir, `overlay-${beat}.png`);
   fs.writeFileSync(outPath, buf);
-  console.log(`  ✓ slide ${beat} → ${outPath}  (${(buf.length / 1024).toFixed(1)} KB)`);
+  console.log(`  ✓ overlay ${beat} → ${outPath}  (${(buf.length / 1024).toFixed(1)} KB)`);
 }
 
-console.log("All slides rendered.");
+// ── Fetch photo manifest ───────────────────────────────────────────────────
+
+console.log(`\nFetching photo manifest from /api/youtube/photos?slug=${slug}`);
+const photosUrl = `${SITE_URL}/api/youtube/photos?slug=${encodeURIComponent(slug)}`;
+const photosRes = await fetch(photosUrl);
+if (!photosRes.ok) {
+  console.error(`  ✗ photos: ${photosRes.status} ${await photosRes.text()}`);
+  process.exit(1);
+}
+const manifest = await photosRes.json();
+console.log(`  ✓ manifest: ${manifest.photos.length} photo(s), fallback=${manifest.fallback}`);
+
+// Cap to 8 photos max to keep ffmpeg input count reasonable.
+const PHOTO_CAP = 8;
+const photoUrls = manifest.photos.slice(0, PHOTO_CAP);
+
+const downloadedPhotos = [];
+for (let i = 0; i < photoUrls.length; i++) {
+  const url = photoUrls[i];
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`  ⚠ photo ${i} skipped: ${res.status}`);
+      continue;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const outPath = path.join(photosDir, `photo-${i}.jpg`);
+    fs.writeFileSync(outPath, buf);
+    downloadedPhotos.push({ index: i, path: outPath, size: buf.length });
+    console.log(`  ✓ photo ${i} → ${outPath}  (${(buf.length / 1024).toFixed(1)} KB)`);
+  } catch (err) {
+    console.warn(`  ⚠ photo ${i} fetch failed: ${err.message}`);
+  }
+}
+
+if (downloadedPhotos.length === 0) {
+  console.error("No photos downloaded — assembly will fail without canvas");
+  process.exit(1);
+}
+
+fs.writeFileSync(
+  path.join(photosDir, "manifest.json"),
+  JSON.stringify({
+    photos: downloadedPhotos.map((p) => p.path),
+    count: downloadedPhotos.length,
+    fallback: manifest.fallback,
+  }, null, 2),
+);
+
+console.log(`\n✓ ${beatCount} overlays + ${downloadedPhotos.length} photos ready.`);
