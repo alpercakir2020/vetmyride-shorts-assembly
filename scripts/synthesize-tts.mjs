@@ -83,6 +83,15 @@ function tokenize(text) {
     .filter(Boolean);
 }
 
+function isStudioVoice(voice) {
+  return /^en-[A-Z]{2}-Studio-/i.test(voice);
+}
+
+// Google TTS emits MP3 at 128 kbps by default → 16000 bytes/sec.
+function estimateMp3DurationSec(buf) {
+  return buf.length / 16000;
+}
+
 function buildBeatSsml(beat) {
   const words = tokenize(beat.copy);
   if (words.length === 0) return "";
@@ -107,57 +116,111 @@ function buildFullSsml(beats) {
   return `<speak>${body}</speak>`;
 }
 
-const ssml = buildFullSsml(beats);
 const token = await getAccessToken();
-const res = await fetch(TTS_ENDPOINT, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    input: { ssml },
-    voice: { languageCode: DEFAULT_LANGUAGE, name: DEFAULT_VOICE },
-    audioConfig: { audioEncoding: "MP3", speakingRate: 1.0, pitch: 0 },
-    enableTimePointing: ["SSML_MARK"],
-  }),
-});
-if (!res.ok) {
-  console.error(`TTS failed: ${res.status} ${await res.text()}`);
-  process.exit(1);
-}
-const data = await res.json();
-const audio = Buffer.from(data.audioContent, "base64");
-const timepoints = data.timepoints ?? [];
-
 const tmpDir = path.join(process.cwd(), "tmp");
+
+let audio, per_beat, totalDuration;
+const useStudioPath = isStudioVoice(DEFAULT_VOICE);
+
+if (useStudioPath) {
+  // Studio voices reject SSML markup — synth each beat as plain text,
+  // estimate per-word timing proportionally from MP3 byte size.
+  const beatBuffers = [];
+  const beatDurations = [];
+  for (const beat of beats) {
+    const res = await fetch(TTS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        input: { text: beat.copy },
+        voice: { languageCode: DEFAULT_LANGUAGE, name: DEFAULT_VOICE },
+        audioConfig: { audioEncoding: "MP3", speakingRate: 1.0, pitch: 0 },
+      }),
+    });
+    if (!res.ok) {
+      console.error(`Studio synth failed for beat ${beat.id}: ${res.status} ${await res.text()}`);
+      process.exit(1);
+    }
+    const data = await res.json();
+    const buf = Buffer.from(data.audioContent, "base64");
+    beatBuffers.push(buf);
+    beatDurations.push(estimateMp3DurationSec(buf));
+  }
+  audio = Buffer.concat(beatBuffers);
+
+  let cumOffset = 0;
+  per_beat = beats.map((beat, i) => {
+    const dur = beatDurations[i];
+    const words = tokenize(beat.copy);
+    const charTotal = words.reduce((acc, w) => acc + w.length, 0) || 1;
+    let runningChars = 0;
+    const ws = words.map((word) => {
+      const startInBeat = (runningChars / charTotal) * dur;
+      runningChars += word.length;
+      return { word, time_sec: +(cumOffset + startInBeat).toFixed(3) };
+    });
+    const endSec = cumOffset + dur;
+    const entry = { beat_id: beat.id, words: ws, end_sec: +endSec.toFixed(3) };
+    cumOffset = endSec;
+    return entry;
+  });
+  totalDuration = +cumOffset.toFixed(3);
+} else {
+  // Markable path — full SSML with <mark> word timepoints.
+  const ssml = buildFullSsml(beats);
+  const res = await fetch(TTS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      input: { ssml },
+      voice: { languageCode: DEFAULT_LANGUAGE, name: DEFAULT_VOICE },
+      audioConfig: { audioEncoding: "MP3", speakingRate: 1.0, pitch: 0 },
+      enableTimePointing: ["SSML_MARK"],
+    }),
+  });
+  if (!res.ok) {
+    console.error(`TTS failed: ${res.status} ${await res.text()}`);
+    process.exit(1);
+  }
+  const data = await res.json();
+  audio = Buffer.from(data.audioContent, "base64");
+  const timepoints = data.timepoints ?? [];
+  per_beat = beats.map((beat) => {
+    const beatPoints = timepoints
+      .filter((t) => t.markName.startsWith(`w_${beat.id}_`))
+      .filter((t) => !t.markName.endsWith("_end"))
+      .map((t) => {
+        const idx = Number(t.markName.split("_").pop());
+        const word = tokenize(beat.copy)[idx] ?? "";
+        return { word, time_sec: t.timeSeconds };
+      })
+      .sort((a, b) => a.time_sec - b.time_sec);
+    const endMark = timepoints.find((t) => t.markName === `w_${beat.id}_end`);
+    return {
+      beat_id: beat.id,
+      words: beatPoints,
+      end_sec: endMark?.timeSeconds ?? 0,
+    };
+  });
+  totalDuration =
+    timepoints.length > 0
+      ? Math.max(...timepoints.map((t) => t.timeSeconds))
+      : 0;
+}
+
 fs.writeFileSync(path.join(tmpDir, "narration.mp3"), audio);
-
-const per_beat = beats.map((beat) => {
-  const beatPoints = timepoints
-    .filter((t) => t.markName.startsWith(`w_${beat.id}_`))
-    .filter((t) => !t.markName.endsWith("_end"))
-    .map((t) => {
-      const idx = Number(t.markName.split("_").pop());
-      const word = tokenize(beat.copy)[idx] ?? "";
-      return { word, time_sec: t.timeSeconds };
-    })
-    .sort((a, b) => a.time_sec - b.time_sec);
-  const endMark = timepoints.find((t) => t.markName === `w_${beat.id}_end`);
-  return {
-    beat_id: beat.id,
-    words: beatPoints,
-    end_sec: endMark?.timeSeconds ?? 0,
-  };
-});
-
-const totalDuration =
-  timepoints.length > 0 ? Math.max(...timepoints.map((t) => t.timeSeconds)) : 0;
-
 fs.writeFileSync(
   path.join(tmpDir, "word-timestamps.json"),
   JSON.stringify({ per_beat, total_duration_sec: totalDuration }, null, 2),
 );
 
 console.log(`✓ narration.mp3 (${(audio.length / 1024).toFixed(1)} KB)`);
-console.log(`✓ word-timestamps.json (${timepoints.length} marks, ${totalDuration.toFixed(2)}s)`);
+console.log(
+  `✓ word-timestamps.json (${per_beat.reduce((a, b) => a + b.words.length, 0)} words, ${totalDuration.toFixed(2)}s, ${useStudioPath ? "Studio plain-text path" : "Markable SSML path"})`,
+);
