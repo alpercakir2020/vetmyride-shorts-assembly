@@ -72,6 +72,7 @@ console.log(`Total duration: ${totalDuration.toFixed(2)}s using track ${track.fi
 // ── Per-beat photo assignment ───────────────────────────────────────────────
 
 const photoPaths = photoManifest.photos;
+const reportCardPath = photoManifest.report_card;
 const coverPhoto = photoPaths[0];
 
 // CATCH cycle: spread remaining photos across the catch duration.
@@ -79,12 +80,22 @@ const coverPhoto = photoPaths[0];
 const catchTiming = beatTimings.find((t) => t.id === "catch");
 const catchPhotos = photoPaths.length > 1 ? photoPaths.slice(1) : [coverPhoto];
 
-/** Build the photo timeline — segments of (photo, start, end, beatId). */
+/**
+ * Build the photo timeline — segments of (photo, start, end, beatId).
+ *
+ * Beats 1-3 use auction photos (with catch cycling).
+ * Beats 4-5 switch to the report card so the viewer sees the product UI
+ * for the verdict + close (30% of every video).
+ */
 function buildPhotoSegments() {
   const segs = [];
   for (const t of beatTimings) {
+    // Verdict + CTA → product mockup canvas (when available)
+    if ((t.id === "verdict" || t.id === "cta") && reportCardPath) {
+      segs.push({ photo: reportCardPath, start: t.start, end: t.end, beatId: t.id, dur: t.duration });
+      continue;
+    }
     if (t.id === "catch" && catchPhotos.length > 1) {
-      // Cycle through catchPhotos every ~1.5s
       const perPhotoDur = t.duration / catchPhotos.length;
       let s = t.start;
       for (let i = 0; i < catchPhotos.length; i++) {
@@ -180,7 +191,10 @@ let nextInputIdx = 2;
 const overlayInputIndices = [];
 for (const p of overlayPaths) {
   overlayInputIndices.push(nextInputIdx++);
-  args.push("-loop", "1", "-i", p);
+  // `-t` bounds the looped still so the fade filter can compute
+  // alpha durations correctly (otherwise ffmpeg 6.x throws
+  // "Error reinitializing filters" on infinite-duration inputs).
+  args.push("-loop", "1", "-t", totalDuration.toFixed(3), "-i", p);
 }
 
 const musicIdx = hasMusic ? nextInputIdx++ : -1;

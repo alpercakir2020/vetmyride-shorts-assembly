@@ -56,6 +56,27 @@ for (let beat = 1; beat <= beatCount; beat++) {
   console.log(`  ✓ overlay ${beat} → ${outPath}  (${(buf.length / 1024).toFixed(1)} KB)`);
 }
 
+// ── Fetch report-card synthetic image (used as canvas for beats 4-5) ──────
+//
+// For Roast format, beats 1-3 show the auction photo and beats 4-5 show a
+// styled "report mockup" so the viewer sees the product UI for 30%+ of
+// runtime. Skipped for Walkthrough format (which captures real report).
+
+let reportCardPath = null;
+if (format === "roast") {
+  console.log(`\nFetching report card from /api/og/youtube-report-card?slug=${slug}`);
+  const cardUrl = `${SITE_URL}/api/og/youtube-report-card?slug=${encodeURIComponent(slug)}`;
+  const cardRes = await fetch(cardUrl);
+  if (cardRes.ok) {
+    const buf = Buffer.from(await cardRes.arrayBuffer());
+    reportCardPath = path.join(overlaysDir, "report-card.jpg");
+    fs.writeFileSync(reportCardPath, buf);
+    console.log(`  ✓ report card → ${reportCardPath}  (${(buf.length / 1024).toFixed(1)} KB)`);
+  } else {
+    console.warn(`  ⚠ report card fetch ${cardRes.status} — beats 4-5 will use auction photo`);
+  }
+}
+
 // ── Fetch photo manifest ───────────────────────────────────────────────────
 
 console.log(`\nFetching photo manifest from /api/youtube/photos?slug=${slug}`);
@@ -100,9 +121,10 @@ fs.writeFileSync(
   path.join(photosDir, "manifest.json"),
   JSON.stringify({
     photos: downloadedPhotos.map((p) => p.path),
+    report_card: reportCardPath,
     count: downloadedPhotos.length,
     fallback: manifest.fallback,
   }, null, 2),
 );
 
-console.log(`\n✓ ${beatCount} overlays + ${downloadedPhotos.length} photos ready.`);
+console.log(`\n✓ ${beatCount} overlays + ${downloadedPhotos.length} photos${reportCardPath ? " + report card" : ""} ready.`);
