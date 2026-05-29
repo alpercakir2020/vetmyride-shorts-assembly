@@ -245,8 +245,18 @@ const filters = [];
 // perceptible per-frame but kills the "static slideshow" signal.
 const PAN_X_RANGE = 108; // (1188-1080)
 const PAN_Y_RANGE = 192; // (2112-1920)
+// DP-grade chain applied AFTER the time-keyed crop pan and BEFORE Satori
+// overlays composite. Per the cinematographer expert review: this single
+// chain transforms the flat-lit Copart stock photo into something that
+// reads "shot with intent" — crushed blacks, lifted contrast, slight
+// vignette gravity, 35mm-style grain. ~25ms/frame extra render.
+const PHOTO_GRADE =
+  "curves=preset=increase_contrast," +
+  "eq=saturation=1.15:contrast=1.10:gamma=0.95," +
+  "vignette=PI/4.5," +
+  "noise=alls=7:allf=t+u";
 filters.push(
-  `[0:v]fps=30,scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112,setsar=1,crop=1080:1920:x='${PAN_X_RANGE}*t/${totalDuration.toFixed(3)}':y='${PAN_Y_RANGE}*t/${(totalDuration * 2).toFixed(3)} + ${PAN_Y_RANGE / 4}'[bg]`,
+  `[0:v]fps=30,scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112,setsar=1,crop=1080:1920:x='${PAN_X_RANGE}*t/${totalDuration.toFixed(3)}':y='${PAN_Y_RANGE}*t/${(totalDuration * 2).toFixed(3)} + ${PAN_Y_RANGE / 4}',${PHOTO_GRADE}[bg]`,
 );
 
 // ── Overlay layers with fade-in / fade-out animation ──────────────────────
@@ -272,8 +282,8 @@ for (let i = 0; i < overlayPaths.length; i++) {
   const overlayInTag = `[ov${i}_fx]`;
   filters.push(
     `[${inputIdx}:v]scale=1080:1920,setsar=1,format=rgba,` +
-    `fade=in:st=${ovStart.toFixed(3)}:d=${FADE_IN}:alpha=1,` +
-    `fade=out:st=${(ovEnd - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1` +
+    `fade=in:st=${ovStart.toFixed(3)}:d=${FADE_IN}:alpha=1:curve=cub,` +
+    `fade=out:st=${(ovEnd - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1:curve=hsin` +
     overlayInTag,
   );
   const outTag = i === overlayPaths.length - 1 ? "[vmix]" : `[v${i}]`;
