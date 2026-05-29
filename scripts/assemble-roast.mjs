@@ -344,8 +344,14 @@ vmap = "[vfade]";
 //   • Pad TTS with PRE_ROLL_SEC of leading silence so the narration doesn't
 //     start mid-word.
 //   • Fade out the music in the last ~0.6s of the tail.
+//   • Boost TTS volume during the verdict silence window so the verdict
+//     word LANDS instead of disappearing into the dropped music.
 const audioFadeStart = Math.max(0, totalDuration - 0.6);
-const audioChunks = [`[1:a]adelay=${Math.floor(PRE_ROLL_SEC * 1000)}|${Math.floor(PRE_ROLL_SEC * 1000)},volume=1.0[a_tts]`];
+const audioChunks = [
+  `[1:a]adelay=${Math.floor(PRE_ROLL_SEC * 1000)}|${Math.floor(PRE_ROLL_SEC * 1000)},` +
+  `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=2.0,` +
+  `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=1.0[a_tts]`,
+];
 // Verdict-moment timing (v11): all 4 video-craft experts independently
 // converged on the same single moment — the verdict word needs SILENCE
 // around it + a sub-bass thump under it.
@@ -414,8 +420,11 @@ audioLabels.push("[a_thump]"); // v11: sub-bass thump under verdict word
 for (let i = 0; i < sfxIndices.length; i++) audioLabels.push(`[a_sfx${i}]`);
 // Loudnorm to -14 LUFS (Shorts shelf broadcast target). Without this the
 // video sounds thin sandwiched between TikTok-imports averaging -8 LUFS.
+// Use dynaudnorm instead of loudnorm — dynaudnorm respects intentional
+// volume design (silences stay silent, boosts stay boosted) whereas
+// loudnorm's dynamic mode was equalizing the verdict-moment polish away.
 audioChunks.push(
-  `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,loudnorm=I=-14:LRA=11:TP=-1.5,atrim=duration=${totalDuration.toFixed(3)}[aout]`,
+  `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,dynaudnorm=f=300:g=11,atrim=duration=${totalDuration.toFixed(3)}[aout]`,
 );
 
 filters.push(audioChunks.join(";"));
