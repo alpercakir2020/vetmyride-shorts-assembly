@@ -133,9 +133,12 @@ for (const s of photoSegments) {
 // photo change. Good enough as the first motion pass.
 
 const concatList = path.join(tmpDir, "concat.txt");
-const lines = photoSegments.map(
-  (s) => `file '${s.photo}'\nduration ${s.dur.toFixed(3)}`,
-);
+const lines = photoSegments.map((s, i) => {
+  let dur = s.dur;
+  if (i === 0) dur += PRE_ROLL_SEC; // extend first segment for pre-roll
+  if (i === photoSegments.length - 1) dur += TAIL_SEC; // extend last for tail hold
+  return `file '${s.photo}'\nduration ${dur.toFixed(3)}`;
+});
 // Last entry repeated without duration anchors the end (ffmpeg concat quirk)
 lines.push(`file '${photoSegments[photoSegments.length - 1].photo}'`);
 fs.writeFileSync(concatList, lines.join("\n"));
@@ -184,10 +187,13 @@ const musicPath = path.join(assetsDir, "music", track.file);
 const hasMusic = fs.existsSync(musicPath);
 if (!hasMusic) console.warn(`  ⚠ music bed missing: ${musicPath} — proceeding without`);
 
-// DejaVu Sans is pre-installed on Ubuntu GHA runners — no font file needed.
-// On macOS dev, fall back to the system fonts.
-const hasKaraoke = fs.existsSync(path.join(tmpDir, "karaoke.ass"));
-if (!hasKaraoke) console.warn("  ⚠ karaoke.ass not found — slideshow will run without burned subs");
+// Karaoke captions disabled in v8 — Studio voices don't expose word-level
+// timing (we'd have to estimate), and the captions kept colliding with the
+// design overlay text regardless of MarginV. The TTS voice carries the
+// narration on its own. Re-enable when we either:
+//   • Switch to a Wavenet/Neural2 voice (supports SSML marks for exact timing)
+//   • Upgrade to ElevenLabs (has word-level timing in their API)
+const hasKaraoke = false;
 
 // ── FFmpeg invocation ───────────────────────────────────────────────────────
 
@@ -254,18 +260,21 @@ const FADE_OUT = 0.20;
 let prev = "[bg]";
 for (let i = 0; i < overlayPaths.length; i++) {
   const t = beatTimings[i];
+  // Shift overlay times by PRE_ROLL_SEC since the canvas now has a leading
+  // photo-only window.
+  const ovStart = t.start + PRE_ROLL_SEC;
+  const ovEnd = t.end + PRE_ROLL_SEC;
   const inputIdx = overlayInputIndices[i];
   const overlayInTag = `[ov${i}_fx]`;
-  // Pre-process: scale to frame, then fade in/out timed to the beat
   filters.push(
     `[${inputIdx}:v]scale=1080:1920,setsar=1,format=rgba,` +
-    `fade=in:st=${t.start.toFixed(3)}:d=${FADE_IN}:alpha=1,` +
-    `fade=out:st=${(t.end - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1` +
+    `fade=in:st=${ovStart.toFixed(3)}:d=${FADE_IN}:alpha=1,` +
+    `fade=out:st=${(ovEnd - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1` +
     overlayInTag,
   );
   const outTag = i === overlayPaths.length - 1 ? "[vmix]" : `[v${i}]`;
   filters.push(
-    `${prev}${overlayInTag}overlay=0:0:enable='between(t,${t.start.toFixed(3)},${t.end.toFixed(3)})'${outTag}`,
+    `${prev}${overlayInTag}overlay=0:0:enable='between(t,${ovStart.toFixed(3)},${ovEnd.toFixed(3)})'${outTag}`,
   );
   prev = outTag;
 }
@@ -283,19 +292,27 @@ const fadeStart = Math.max(0, totalDuration - 0.5);
 filters.push(`${vmap}fade=t=out:st=${fadeStart.toFixed(3)}:d=0.5[vfade]`);
 vmap = "[vfade]";
 
-// Audio mix — fade out the last 0.45s so narration + music land smoothly.
-const audioFadeStart = Math.max(0, totalDuration - 0.45);
-const audioChunks = [`[1:a]volume=1.0,afade=out:st=${audioFadeStart.toFixed(3)}:d=0.45[a_tts]`];
+// Audio mix:
+//   • Pad TTS with PRE_ROLL_SEC of leading silence so the narration doesn't
+//     start mid-word.
+//   • Fade out the music in the last ~0.6s of the tail.
+const audioFadeStart = Math.max(0, totalDuration - 0.6);
+const audioChunks = [`[1:a]adelay=${Math.floor(PRE_ROLL_SEC * 1000)}|${Math.floor(PRE_ROLL_SEC * 1000)},volume=1.0[a_tts]`];
 if (hasMusic) {
+  // Shift CATCH duck window by PRE_ROLL_SEC since the timeline shifted.
+  const catchStart = catchTiming ? catchTiming.start + PRE_ROLL_SEC : 0;
+  const catchEnd = catchTiming ? catchTiming.end + PRE_ROLL_SEC : 0;
   const duckExpr = catchTiming
-    ? `volume=enable='between(t,${catchTiming.start.toFixed(3)},${catchTiming.end.toFixed(3)})':volume=0.25,volume=enable='not(between(t,${catchTiming.start.toFixed(3)},${catchTiming.end.toFixed(3)}))':volume=0.13`
+    ? `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})':volume=0.25,volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))':volume=0.13`
     : "volume=0.13";
-  audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.45,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
+  audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.6,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
 }
 for (let i = 0; i < sfxIndices.length; i++) {
   const s = sfxIndices[i];
+  // Shift SFX cues by PRE_ROLL_SEC so they land at the right beat moment.
+  const at = s.at + PRE_ROLL_SEC;
   audioChunks.push(
-    `[${s.idx}:a]adelay=${Math.floor(s.at * 1000)}|${Math.floor(s.at * 1000)},volume=0.7[a_sfx${i}]`,
+    `[${s.idx}:a]adelay=${Math.floor(at * 1000)}|${Math.floor(at * 1000)},volume=0.7[a_sfx${i}]`,
   );
 }
 const audioLabels = ["[a_tts]"];
