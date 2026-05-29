@@ -340,6 +340,24 @@ const fadeStart = Math.max(0, totalDuration - 0.5);
 filters.push(`${vmap}fade=t=out:st=${fadeStart.toFixed(3)}:d=0.5[vfade]`);
 vmap = "[vfade]";
 
+// Verdict-moment timing (v11): all 4 video-craft experts independently
+// converged on the same single moment — the verdict word needs SILENCE
+// around it + a sub-bass thump under it.
+//
+// Assumption: TTS verdict word ("Walk." "Pass.") lands in the final
+// ~0.45s of beat 4. We define a silence window from -0.30s before to
+// +0.20s after the verdict word, and trigger a 0.45s sub-bass tone
+// under the word itself.
+//
+// IMPORTANT: declared BEFORE audioChunks because the TTS volume-envelope
+// references silenceStart/silenceEnd. Hoisting them avoids the TDZ
+// "Cannot access 'silenceStart' before initialization" ReferenceError.
+const verdictBeat = beatTimings[3]; // VERDICT is the 4th beat (index 3)
+const verdictWordStart = verdictBeat.end - 0.45 + PRE_ROLL_SEC;
+const verdictWordEnd = verdictBeat.end + PRE_ROLL_SEC;
+const silenceStart = verdictWordStart - 0.30;
+const silenceEnd = verdictWordEnd + 0.20;
+
 // Audio mix:
 //   • Pad TTS with PRE_ROLL_SEC of leading silence so the narration doesn't
 //     start mid-word.
@@ -352,19 +370,6 @@ const audioChunks = [
   `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=2.0,` +
   `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=1.0[a_tts]`,
 ];
-// Verdict-moment timing (v11): all 4 video-craft experts independently
-// converged on the same single moment — the verdict word needs SILENCE
-// around it + a sub-bass thump under it.
-//
-// Assumption: TTS verdict word ("Walk." "Pass.") lands in the final
-// ~0.45s of beat 4. We define a silence window from -0.30s before to
-// +0.20s after the verdict word, and trigger a 0.45s sub-bass tone
-// under the word itself.
-const verdictBeat = beatTimings[3]; // VERDICT is the 4th beat (index 3)
-const verdictWordStart = verdictBeat.end - 0.45 + PRE_ROLL_SEC;
-const verdictWordEnd = verdictBeat.end + PRE_ROLL_SEC;
-const silenceStart = verdictWordStart - 0.30;
-const silenceEnd = verdictWordEnd + 0.20;
 
 if (hasMusic) {
   // Shift CATCH duck window by PRE_ROLL_SEC since the timeline shifted.
