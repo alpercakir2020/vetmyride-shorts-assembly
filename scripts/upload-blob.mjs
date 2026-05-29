@@ -34,8 +34,12 @@ const videoBlob = await put(`vetmyride-shorts/${rowId}.mp4`, videoBuf, {
   access: "public",
   contentType: "video/mp4",
   token,
-  addRandomSuffix: false,
-  allowOverwrite: true,
+  // Append a random suffix so each render gets a unique URL — without
+  // this, browsers and the Vercel CDN aggressively cache the previous
+  // build's MP4 at the deterministic path. Cache busting via query string
+  // works for one-off testing but the row's video_url ends up stale in
+  // the admin UI and publish cron.
+  addRandomSuffix: true,
 });
 console.log(`✓ video uploaded → ${videoBlob.url}`);
 
