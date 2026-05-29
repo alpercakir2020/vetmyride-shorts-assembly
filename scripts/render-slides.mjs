@@ -130,14 +130,26 @@ if (downloadedPhotos.length === 0) {
 // Skipped when we already have >=4 real photos (multi-photo entries don't
 // need synthesized variety).
 
-if (downloadedPhotos.length < 4) {
+// Synthesize 8 crop variants from the cover when we have <6 real photos.
+// Each variant is a different framing (wide / left / right / top-half /
+// bottom-half / center-zoom / left-zoom / right-zoom). The assembler
+// hard-cuts between these during the CATCH beat to fake multi-camera
+// coverage from a single source — per the video panel convergence on
+// "replace continuous pan with hard cuts between cropped sub-frames."
+if (downloadedPhotos.length < 6) {
   const cover = downloadedPhotos[0].path;
-  console.log(`\nOnly ${downloadedPhotos.length} real photo(s) — synthesizing crop variants from cover`);
+  console.log(`\nOnly ${downloadedPhotos.length} real photo(s) — synthesizing 8 crop variants from cover`);
   const variants = [
-    // Each: [name, crop_filter] — crops applied to the 800×600 source
+    // Static crops at slight zoom/offset for variety
     { name: "variant-left", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:0:0" },
     { name: "variant-right", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080):0" },
-    { name: "variant-zoomed", filter: "scale=1620:2880:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:(ih-1920)/2" },
+    { name: "variant-top", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:0" },
+    { name: "variant-bottom", filter: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:(ih-1920)" },
+    // Punch-in zooms (larger source, tighter window)
+    { name: "variant-zoom-center", filter: "scale=1620:2880:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:(ih-1920)/2" },
+    { name: "variant-zoom-left", filter: "scale=1620:2880:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)*0.2:(ih-1920)*0.4" },
+    { name: "variant-zoom-right", filter: "scale=1620:2880:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)*0.8:(ih-1920)*0.4" },
+    { name: "variant-tight", filter: "scale=2160:3840:force_original_aspect_ratio=increase,crop=1080:1920:(iw-1080)/2:(ih-1920)/2" },
   ];
   for (const v of variants) {
     const outPath = path.join(photosDir, `${v.name}.jpg`);

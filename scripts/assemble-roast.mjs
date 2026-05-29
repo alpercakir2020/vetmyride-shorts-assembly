@@ -90,28 +90,65 @@ const catchPhotos = photoPaths.length > 1 ? photoPaths.slice(1) : [coverPhoto];
 /**
  * Build the photo timeline — segments of (photo, start, end, beatId).
  *
- * Beats 1-3 use auction photos (with catch cycling).
- * Beats 4-5 switch to the report card so the viewer sees the product UI
- * for the verdict + close (30% of every video).
+ * v10: hard cuts between varied photo crops driven by the script.
+ * Per mobile-editor panel: "v7 stops being AI slop the moment you
+ * replace one continuous pan with 5 fade-in overlays with hard cuts
+ * between pre-cropped sub-frames." Target 12-18 cuts in a 30s video.
+ *
+ *   HOOK    (4s)  — 2 sub-cuts (~2s each)
+ *   SETUP   (4s)  — 2 sub-cuts
+ *   CATCH   (11s) — 6 sub-cuts (~1.8s each) — the dopamine beat
+ *   VERDICT (4s)  — report card, sustained (no cuts — landing requires hold)
+ *   CTA     (3s)  — report card sustained
  */
 function buildPhotoSegments() {
+  // Min/max sub-clip duration in seconds. Mobile Shorts cut every 1.2-1.8s.
+  const MIN_SUB_DUR = 1.2;
+  const MIN_SUB_DUR_CATCH = 1.4;
+
   const segs = [];
   for (const t of beatTimings) {
-    // Verdict + CTA → product mockup canvas (when available)
+    // Verdict + CTA → product mockup canvas, sustained (motion docs editor:
+    // "hold the verdict frame 1.5s — the only sustained shot in the video").
     if ((t.id === "verdict" || t.id === "cta") && reportCardPath) {
       segs.push({ photo: reportCardPath, start: t.start, end: t.end, beatId: t.id, dur: t.duration });
       continue;
     }
-    if (t.id === "catch" && catchPhotos.length > 1) {
-      const perPhotoDur = t.duration / catchPhotos.length;
-      let s = t.start;
-      for (let i = 0; i < catchPhotos.length; i++) {
-        const e = i === catchPhotos.length - 1 ? t.end : s + perPhotoDur;
-        segs.push({ photo: catchPhotos[i], start: s, end: e, beatId: t.id, dur: e - s });
-        s = e;
+
+    // Photo beats: hard cut between varied crops. Pick how many sub-cuts
+    // based on duration vs target min sub-dur.
+    const targetMin = t.id === "catch" ? MIN_SUB_DUR_CATCH : MIN_SUB_DUR;
+    const nCuts = Math.max(1, Math.floor(t.duration / targetMin));
+    const subDur = t.duration / nCuts;
+
+    for (let i = 0; i < nCuts; i++) {
+      // Pick a photo variant by rotating through the available photos.
+      // We bias each beat to start on a different "first" photo to keep
+      // the eye from re-locking on cover photo throughout.
+      let pickIdx;
+      switch (t.id) {
+        case "hook":
+          pickIdx = i; // cover, then variant 1
+          break;
+        case "setup":
+          pickIdx = (photoPaths.length > 2 ? 2 : 0) + i;
+          break;
+        case "catch":
+          pickIdx = (photoPaths.length > 4 ? 4 : 0) + i;
+          break;
+        default:
+          pickIdx = i;
       }
-    } else {
-      segs.push({ photo: coverPhoto, start: t.start, end: t.end, beatId: t.id, dur: t.duration });
+      const photo = photoPaths[pickIdx % photoPaths.length] ?? coverPhoto;
+      segs.push({
+        photo,
+        start: t.start + i * subDur,
+        end: t.start + (i + 1) * subDur,
+        beatId: t.id,
+        dur: subDur,
+        subIndex: i,
+        totalSubs: nCuts,
+      });
     }
   }
   return segs;
