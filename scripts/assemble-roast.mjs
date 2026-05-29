@@ -91,21 +91,17 @@ const catchPhotos = photoPaths.length > 1 ? photoPaths.slice(1) : [coverPhoto];
  * Build the photo timeline — segments of (photo, start, end, beatId).
  *
  * v10: hard cuts between varied photo crops driven by the script.
- * Per mobile-editor panel: "v7 stops being AI slop the moment you
- * replace one continuous pan with 5 fade-in overlays with hard cuts
- * between pre-cropped sub-frames." Target 12-18 cuts in a 30s video.
+ * v12: energy curve via shot-duration acceleration. Mobile Shorts editor:
+ * "shot duration getting shorter into the verdict, then longer for the
+ * hold." Slap → tease → escalate → BANG → exhale.
  *
- *   HOOK    (4s)  — 2 sub-cuts (~2s each)
- *   SETUP   (4s)  — 2 sub-cuts
- *   CATCH   (11s) — 6 sub-cuts (~1.8s each) — the dopamine beat
+ *   HOOK    (4s)  — 2 cuts at 2.0s (let viewer ingest the opening)
+ *   SETUP   (4s)  — 2 cuts at 2.0s (medium pace, sets up)
+ *   CATCH   (11s) — 7 cuts ACCELERATING: 2.0s → 1.5s → 1.0s (tension builds)
  *   VERDICT (4s)  — report card, sustained (no cuts — landing requires hold)
  *   CTA     (3s)  — report card sustained
  */
 function buildPhotoSegments() {
-  // Min/max sub-clip duration in seconds. Mobile Shorts cut every 1.2-1.8s.
-  const MIN_SUB_DUR = 1.2;
-  const MIN_SUB_DUR_CATCH = 1.4;
-
   const segs = [];
   for (const t of beatTimings) {
     // Verdict + CTA → product mockup canvas, sustained (motion docs editor:
@@ -115,40 +111,55 @@ function buildPhotoSegments() {
       continue;
     }
 
-    // Photo beats: hard cut between varied crops. Pick how many sub-cuts
-    // based on duration vs target min sub-dur.
-    const targetMin = t.id === "catch" ? MIN_SUB_DUR_CATCH : MIN_SUB_DUR;
-    const nCuts = Math.max(1, Math.floor(t.duration / targetMin));
-    const subDur = t.duration / nCuts;
+    // Compute number of sub-cuts based on beat — biased toward more cuts
+    // on CATCH for the dopamine beat.
+    let nCuts;
+    if (t.id === "catch") {
+      nCuts = Math.max(3, Math.min(8, Math.round(t.duration / 1.4)));
+    } else {
+      nCuts = Math.max(1, Math.min(3, Math.round(t.duration / 1.8)));
+    }
 
+    // Build sub-cut durations. For CATCH, accelerate (earlier cuts longer,
+    // later cuts shorter) so tension builds into the verdict reveal.
+    const subDurs = [];
+    if (t.id === "catch" && nCuts >= 3) {
+      // Geometric acceleration: each cut ~13% shorter than the previous.
+      // Normalize so the total still equals t.duration.
+      const ratio = 0.87;
+      let acc = 0;
+      const weights = [];
+      for (let i = 0; i < nCuts; i++) {
+        const w = Math.pow(ratio, i);
+        weights.push(w);
+        acc += w;
+      }
+      for (const w of weights) subDurs.push((w / acc) * t.duration);
+    } else {
+      for (let i = 0; i < nCuts; i++) subDurs.push(t.duration / nCuts);
+    }
+
+    let s = t.start;
     for (let i = 0; i < nCuts; i++) {
-      // Pick a photo variant by rotating through the available photos.
-      // We bias each beat to start on a different "first" photo to keep
-      // the eye from re-locking on cover photo throughout.
+      const subDur = subDurs[i];
       let pickIdx;
       switch (t.id) {
-        case "hook":
-          pickIdx = i; // cover, then variant 1
-          break;
-        case "setup":
-          pickIdx = (photoPaths.length > 2 ? 2 : 0) + i;
-          break;
-        case "catch":
-          pickIdx = (photoPaths.length > 4 ? 4 : 0) + i;
-          break;
-        default:
-          pickIdx = i;
+        case "hook":   pickIdx = i; break;
+        case "setup":  pickIdx = (photoPaths.length > 2 ? 2 : 0) + i; break;
+        case "catch":  pickIdx = (photoPaths.length > 4 ? 4 : 0) + i; break;
+        default:       pickIdx = i;
       }
       const photo = photoPaths[pickIdx % photoPaths.length] ?? coverPhoto;
       segs.push({
         photo,
-        start: t.start + i * subDur,
-        end: t.start + (i + 1) * subDur,
+        start: s,
+        end: s + subDur,
         beatId: t.id,
         dur: subDur,
         subIndex: i,
         totalSubs: nCuts,
       });
+      s += subDur;
     }
   }
   return segs;
