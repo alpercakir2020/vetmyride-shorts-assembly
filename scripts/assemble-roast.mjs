@@ -408,8 +408,11 @@ args.push(
   "-t", "0.45",
   "-i", "aevalsrc='0.55*sin(2*PI*55*t)':sample_rate=48000:duration=0.45",
 );
+// Envelope via afade: 50ms attack + 50ms release on a 0.45s tone.
+// Simpler + more reliable than expression-based volume (which was
+// throwing NaN on filter init).
 audioChunks.push(
-  `[${thumpInputIdx}:a]volume='if(lt(t,0.05),t/0.05,if(lt(t,0.4),1-((t-0.05)/0.35)*0.3,0.7-((t-0.4)/0.05)*0.7))',adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},lowpass=f=180,volume=0.55[a_thump]`,
+  `[${thumpInputIdx}:a]afade=in:st=0:d=0.05,afade=out:st=0.4:d=0.05,lowpass=f=180,adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},volume=0.7[a_thump]`,
 );
 for (let i = 0; i < sfxIndices.length; i++) {
   const s = sfxIndices[i];
