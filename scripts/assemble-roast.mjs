@@ -295,8 +295,16 @@ function buildFinalAudio() {
     `anullsrc=r=48000:cl=stereo,${AF},atrim=duration=${preSil.toFixed(3)},asetpts=PTS-STARTPTS[presil]`,
   );
   voiceLabels.push("[presil]");
+  // Verdict word: an isolated "Walk." has a steep natural decay (falling
+  // intonation + hard stop) so the tail goes inaudible ~300ms in. Flatten that
+  // envelope with a fast-release compressor (clamps the loud onset, recovers
+  // before the tail so the word stays even) + fixed makeup gain, so the WHOLE
+  // word lands at one audible level instead of fading out under the listener.
   f.push(
-    `[${verdictInIdx}:a]${AF},apad=pad_dur=${postSil.toFixed(3)},asetpts=PTS-STARTPTS[verd]`,
+    `[${verdictInIdx}:a]${AF},` +
+      `acompressor=threshold=-20dB:ratio=4:attack=5:release=80,` +
+      `volume=4dB,` +
+      `apad=pad_dur=${postSil.toFixed(3)},asetpts=PTS-STARTPTS[verd]`,
   );
   voiceLabels.push("[verd]");
   f.push(
@@ -323,16 +331,19 @@ function buildFinalAudio() {
     mixLabels.push("[music]");
   }
 
-  // Sub-bass thump fired 50ms before the verdict word — its only sonic partner,
-  // landing in the music-free pocket. 90Hz fundamental + 180Hz overtone so
-  // phone speakers (which can't reproduce <150Hz) still feel the impact.
-  const thumpStart = Math.max(0, seg.verdict_word_start_sec - 0.05);
+  // Sub-bass thump fired as a tight PRE-HIT, 180ms before the verdict word and
+  // fully decayed (~word+0.04) before the vowel is intelligible — so it
+  // punctuates the silence like a drum downbeat instead of masking the word's
+  // low formants (the old 0.45s/-50ms thump rang straight through "Walk.").
+  // 90Hz fundamental + 180Hz overtone so phone speakers (which can't reproduce
+  // <150Hz) still feel the impact.
+  const thumpStart = Math.max(0, seg.verdict_word_start_sec - 0.18);
   const thumpMs = Math.floor(thumpStart * 1000);
   const tone = "0.7*sin(2*PI*90*t)+0.4*sin(2*PI*180*t)";
   f.push(
-    `aevalsrc='${tone}|${tone}':channel_layout=stereo:sample_rate=48000:duration=0.45,` +
+    `aevalsrc='${tone}|${tone}':channel_layout=stereo:sample_rate=48000:duration=0.24,` +
       `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-      `afade=in:st=0:d=0.05,afade=out:st=0.40:d=0.05,lowpass=f=300,` +
+      `afade=in:st=0:d=0.02,afade=out:st=0.12:d=0.10,lowpass=f=300,` +
       `adelay=${thumpMs}|${thumpMs},volume=1.2[thump]`,
   );
   mixLabels.push("[thump]");
