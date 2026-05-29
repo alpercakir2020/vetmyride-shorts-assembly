@@ -66,11 +66,15 @@ for (let i = 0; i < beats.length; i++) {
   beatTimings.push({ id: beat.id, start, end, duration: end - start, beat });
   prevEnd = end;
 }
-// Don't extend past prevEnd — the concat demuxer can't extrapolate frames
-// past the last segment and zoompan throws "Error reinitializing filters".
-// Instead we apply fades IN the last 0.5s to land smoothly.
-const totalDuration = prevEnd;
-console.log(`Total duration: ${totalDuration.toFixed(2)}s using track ${track.file}`);
+// Pad both ends so the video doesn't clip in/out mid-frame:
+//   • PRE_ROLL: photo shows clean for the first 0.5s before overlays slam in.
+//     Matches algo-specialist's "first 0.5s = single shocking visual, no chrome"
+//     guidance.
+//   • TAIL: hold last frame 1s past TTS end so the close lands smooth.
+const PRE_ROLL_SEC = 0.5;
+const TAIL_SEC = 1.0;
+const totalDuration = PRE_ROLL_SEC + prevEnd + TAIL_SEC;
+console.log(`Total duration: ${totalDuration.toFixed(2)}s (pre-roll ${PRE_ROLL_SEC}s + content ${prevEnd.toFixed(2)}s + tail ${TAIL_SEC}s) using track ${track.file}`);
 
 // ── Per-beat photo assignment ───────────────────────────────────────────────
 
