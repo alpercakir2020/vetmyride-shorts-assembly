@@ -255,6 +255,23 @@ const hasKaraoke = false;
 // offset comes from ffprobe-measured durations (not MP3 byte-size estimates),
 // so the word can never drift out of its window. The main video pass then
 // muxes this file verbatim — no audio filtergraph, nothing left to guess.
+// Measure a clip's true peak (dBFS) so we can lift the one-word verdict clip to
+// a fixed target level. Studio-Q emits isolated single words quiet and with a
+// steep natural decay; a fixed makeup gain guessed blind either under-shoots
+// (verdict buried ~6 dB under the body — the "hard to hear" bug) or clips.
+// Measuring the actual clip and computing the exact gain makes the punchline
+// land at one predictable level no matter what the TTS engine returns.
+function measureClipPeakDb(clipPath) {
+  const r = spawnSync(
+    "ffmpeg",
+    ["-v", "info", "-i", clipPath, "-af", "volumedetect", "-f", "null", "-"],
+    { encoding: "utf8" },
+  );
+  const out = `${r.stderr || ""}${r.stdout || ""}`;
+  const m = out.match(/max_volume:\s*(-?[0-9.]+) dB/);
+  return m ? parseFloat(m[1]) : null;
+}
+
 function buildFinalAudio() {
   const AF = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
   const bodyClips = seg.body_clips;
@@ -265,6 +282,18 @@ function buildFinalAudio() {
   const bodyEnd = seg.body_end_content; // content-time end of body voice
   const total = seg.total_duration_sec;
   const musicEnd = preRoll + bodyEnd; // assembled time: music must be gone here
+
+  // Verdict makeup: measure the isolated verdict clip and lift its PEAK to a
+  // fixed target so the punchline always sits a touch above the body voice
+  // (~-14 dB RMS / ~-4 dB peak), regardless of how quiet Studio-Q renders a
+  // one-word clip. Replaces the old fixed +4 dB + compressor, which couldn't
+  // engage below its threshold and left the word ~6 dB under the body.
+  const VERDICT_TARGET_PEAK_DB = -4;
+  const measuredVerdictPeak = measureClipPeakDb(seg.verdict_clip);
+  const verdictMakeupDb =
+    measuredVerdictPeak == null
+      ? 8
+      : Math.max(0, Math.min(24, VERDICT_TARGET_PEAK_DB - measuredVerdictPeak));
 
   const inputs = ["-y"];
   for (const c of bodyClips) inputs.push("-i", c);
@@ -295,15 +324,15 @@ function buildFinalAudio() {
     `anullsrc=r=48000:cl=stereo,${AF},atrim=duration=${preSil.toFixed(3)},asetpts=PTS-STARTPTS[presil]`,
   );
   voiceLabels.push("[presil]");
-  // Verdict word: an isolated "Walk." has a steep natural decay (falling
-  // intonation + hard stop) so the tail goes inaudible ~300ms in. Flatten that
-  // envelope with a fast-release compressor (clamps the loud onset, recovers
-  // before the tail so the word stays even) + fixed makeup gain, so the WHOLE
-  // word lands at one audible level instead of fading out under the listener.
+  // Verdict word: lifted by the measured makeup gain (computed above) so the
+  // whole word — vowel and the trailing "k" — lands at one audible level a
+  // touch above the body instead of fading out under the listener. No
+  // compressor: a downward compressor can't raise a tail that decays below its
+  // threshold, and the natural stop-consonant decay reads fine once the word as
+  // a whole clears the body voice.
   f.push(
     `[${verdictInIdx}:a]${AF},` +
-      `acompressor=threshold=-20dB:ratio=4:attack=5:release=80,` +
-      `volume=4dB,` +
+      `volume=${verdictMakeupDb.toFixed(2)}dB,` +
       `apad=pad_dur=${postSil.toFixed(3)},asetpts=PTS-STARTPTS[verd]`,
   );
   voiceLabels.push("[verd]");
@@ -336,7 +365,9 @@ function buildFinalAudio() {
   // punctuates the silence like a drum downbeat instead of masking the word's
   // low formants (the old 0.45s/-50ms thump rang straight through "Walk.").
   // 90Hz fundamental + 180Hz overtone so phone speakers (which can't reproduce
-  // <150Hz) still feel the impact.
+  // <150Hz) still feel the impact. Kept low (~-15 dB, ≈ body level) so it never
+  // becomes the loudest thing in the verdict window: a hot thump dominated
+  // dynaudnorm's gain and dragged the word back down ~12 dB under it.
   const thumpStart = Math.max(0, seg.verdict_word_start_sec - 0.18);
   const thumpMs = Math.floor(thumpStart * 1000);
   const tone = "0.7*sin(2*PI*90*t)+0.4*sin(2*PI*180*t)";
@@ -344,7 +375,7 @@ function buildFinalAudio() {
     `aevalsrc='${tone}|${tone}':channel_layout=stereo:sample_rate=48000:duration=0.24,` +
       `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
       `afade=in:st=0:d=0.02,afade=out:st=0.12:d=0.10,lowpass=f=300,` +
-      `adelay=${thumpMs}|${thumpMs},volume=1.2[thump]`,
+      `adelay=${thumpMs}|${thumpMs},volume=0.4[thump]`,
   );
   mixLabels.push("[thump]");
 
@@ -387,7 +418,8 @@ function buildFinalAudio() {
     process.exit(1);
   }
   console.log(
-    `✓ tmp/audio-final.m4a built — ${total.toFixed(2)}s, verdict "${seg.verdict_word}" @ ${seg.verdict_word_start_sec.toFixed(2)}s`,
+    `✓ tmp/audio-final.m4a built — ${total.toFixed(2)}s, verdict "${seg.verdict_word}" @ ${seg.verdict_word_start_sec.toFixed(2)}s ` +
+      `(measured peak ${measuredVerdictPeak == null ? "n/a" : `${measuredVerdictPeak.toFixed(1)}dB`} → makeup +${verdictMakeupDb.toFixed(1)}dB)`,
   );
 }
 
