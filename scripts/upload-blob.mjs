@@ -50,8 +50,8 @@ if (fs.existsSync(thumbPath)) {
     access: "public",
     contentType: "image/jpeg",
     token,
-    addRandomSuffix: false,
-    allowOverwrite: true,
+    // Match video upload — random suffix prevents CDN/browser stale cache.
+    addRandomSuffix: true,
   });
   thumbUrl = thumbBlob.url;
   console.log(`✓ thumbnail uploaded → ${thumbUrl}`);
