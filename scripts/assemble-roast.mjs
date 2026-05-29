@@ -382,12 +382,18 @@ if (hasMusic) {
   //   • During CATCH: duck to 25% (TTS rides above)
   //   • During verdict silence window: -inf (let the word breathe)
   //   • Otherwise: 13% baseline bed
+  // Compose music volume expression as a SINGLE quoted enable per volume
+  // filter. ffmpeg evaluates `enable` as a numeric expression where 0=off,
+  // nonzero=on. Multiple conditions combine via multiplication (*).
+  // Order matters: later volume= entries override earlier ones for the
+  // overlapping windows. Apply silence LAST so it wins on the verdict.
+  const baseline = catchTiming
+    ? `volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13,` +
+      `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.25`
+    : `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`;
   const duckExpr =
-    `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=0.0,` +
-    (catchTiming
-      ? `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})':volume=0.25,` +
-        `volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))'+'*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`
-      : `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`);
+    `${baseline},` +
+    `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=0.0`;
   audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.6,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
 }
 
