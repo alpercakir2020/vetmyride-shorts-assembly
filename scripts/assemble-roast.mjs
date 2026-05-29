@@ -212,26 +212,12 @@ for (let i = 1; i <= 5; i++) {
 
 // ── SFX cue list ────────────────────────────────────────────────────────────
 
-// Locate an SFX file by name — try common extensions in order of preference.
-function findSfx(name) {
-  for (const ext of [".mp3", ".wav", ".ogg"]) {
-    const p = path.join(assetsDir, "sfx", `${name}${ext}`);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
+// Script-driven SFX disabled in v13. Per sound designer + user feedback:
+// random whooshes/buzzers/alarms at beat boundaries felt disconnected
+// from the visuals (no audio-visual punctuation). The sub-bass thump on
+// the verdict word is the only sonic accent we keep — it has a clear
+// visual partner (the PASS pill).
 const sfxCues = [];
-for (const t of beatTimings) {
-  const sfx = t.beat.sfx;
-  if (!sfx) continue;
-  const sfxPath = findSfx(sfx);
-  if (!sfxPath) {
-    console.warn(`  ⚠ SFX file missing, skipping: ${sfx}`);
-    continue;
-  }
-  sfxCues.push({ path: sfxPath, at: t.start });
-}
 
 // ── Music + karaoke detection ───────────────────────────────────────────────
 
