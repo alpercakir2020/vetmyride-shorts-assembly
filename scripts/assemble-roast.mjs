@@ -330,8 +330,8 @@ for (let i = 0; i < overlayPaths.length; i++) {
   const overlayInTag = `[ov${i}_fx]`;
   filters.push(
     `[${inputIdx}:v]scale=1080:1920,setsar=1,format=rgba,` +
-    `fade=in:st=${ovStart.toFixed(3)}:d=${FADE_IN}:alpha=1:curve=cub,` +
-    `fade=out:st=${(ovEnd - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1:curve=hsin` +
+    `fade=in:st=${ovStart.toFixed(3)}:d=${FADE_IN}:alpha=1,` +
+    `fade=out:st=${(ovEnd - FADE_OUT).toFixed(3)}:d=${FADE_OUT}:alpha=1` +
     overlayInTag,
   );
   const outTag = i === overlayPaths.length - 1 ? "[vmix]" : `[v${i}]`;
