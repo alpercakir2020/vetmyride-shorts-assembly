@@ -1,33 +1,41 @@
-// Format A (Roast) — Photo-as-canvas v2 assembly.
+// Format A (Roast) — Photo-as-canvas assembly.
 //
-// v1 used Satori slides AS the canvas. v2 puts the auction photo as the
-// canvas (Ken-Burns animated) and layers transparent Satori PNG overlays
-// on top per beat. Multiple photos cycle during the CATCH beat for visual
-// motion.
+// The auction photo is the canvas (drift-panned + DP-graded) with transparent
+// Satori PNG overlays layered per beat. Multiple photos cut during the CATCH
+// beat for visual motion.
+//
+// v15 STRUCTURAL AUDIO REWRITE — the audio is no longer built inside this
+// ffmpeg invocation by guessing where the verdict word lands. synthesize-tts
+// emits separate body + verdict clips plus a deterministic manifest
+// (tmp/audio-segments.json); buildFinalAudio() concatenates them with EXACT
+// measured silences into tmp/audio-final.m4a, then the main pass muxes that
+// file directly. The verdict word's position is therefore known to the
+// millisecond — killing the "verdict clipped / covered by music / no clear
+// ending" bug class that 14 envelope-tweaking versions chased.
 //
 // Inputs:
 //   • tmp/row.json
 //   • tmp/overlays/overlay-{1..5}.png  — transparent design layers
 //   • tmp/photos/photo-{0..N}.jpg      — auction photo set
 //   • tmp/photos/manifest.json         — { photos: [paths], count, fallback }
-//   • tmp/narration.mp3                — TTS narration
-//   • tmp/word-timestamps.json         — per-beat timing
-//   • tmp/karaoke.ass                  — burned karaoke captions (optional)
-//   • assets/sfx/*.wav, assets/music/*, assets/fonts/*.ttf — optional
+//   • tmp/audio-segments.json          — deterministic audio-build contract
+//   • tmp/tts/beat-{0..2}.mp3, beat-3-math.mp3, verdict.mp3 — voice clips
+//   • tmp/word-timestamps.json         — per-beat visual windows (content time)
+//   • assets/music/*.mp3               — optional music bed
 //
 // Per-beat photo strategy:
-//   HOOK    → photo 0 (cover) with Ken-Burns zoom-in
-//   SETUP   → photo 0 continuing, slow pan
-//   CATCH   → cycle through photos 1..N every 1.5s (dopamine beat)
-//   VERDICT → photo 0 returns, dimmed
-//   CTA     → photo 0 with full overlay
+//   HOOK    → photo 0 (cover) with drift pan
+//   SETUP   → continuing, slow pan
+//   CATCH   → cut through photos every ~1.4s, accelerating (dopamine beat)
+//   VERDICT → report-card mockup, sustained
+//   CTA     → report-card mockup, sustained (post-verdict visual hold)
 //
-// Output: tmp/video.mp4 (1080×1920 H.264, ~32s)
+// Output: tmp/audio-final.m4a (pre-pass) + tmp/video.mp4 (1080×1920 H.264)
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pickTrack, snapToBeat } from "./music-cues.mjs";
+import { pickTrack } from "./music-cues.mjs";
 
 const cwd = process.cwd();
 const tmpDir = path.join(cwd, "tmp");
@@ -42,6 +50,12 @@ const wts = JSON.parse(
 const photoManifest = JSON.parse(
   fs.readFileSync(path.join(photosDir, "manifest.json"), "utf8"),
 );
+// The deterministic audio-build contract written by synthesize-tts.mjs. Every
+// silence, clip path, and the exact verdict-word offset live here — the
+// assembler builds audio strictly from this, never by re-deriving timing.
+const seg = JSON.parse(
+  fs.readFileSync(path.join(tmpDir, "audio-segments.json"), "utf8"),
+);
 const beats = row.script_json?.beats ?? [];
 if (beats.length !== 5) {
   console.error(`expected 5 beats, got ${beats.length}`);
@@ -51,30 +65,35 @@ if (beats.length !== 5) {
 // ── Beat timings ────────────────────────────────────────────────────────────
 
 const track = pickTrack(row.id);
+// Visual beat windows are taken verbatim from the audio manifest's content
+// timeline (synthesize-tts derived both from the SAME ffprobe-measured clip
+// durations). No snapToBeat nudging — a ±0.3s shift here would slide the
+// verdict report-card overlay off the verdict word, which is the exact desync
+// the structural rewrite exists to prevent.
 const beatTimings = [];
 let prevEnd = 0;
 for (let i = 0; i < beats.length; i++) {
   const beat = beats[i];
   const wtsBeat = wts.per_beat[i];
   const start = prevEnd;
-  const nominalEnd =
-    wtsBeat?.end_sec ??
-    (wtsBeat?.words?.[wtsBeat.words.length - 1]?.time_sec ?? start) + 0.4 ??
-    start + (beat.duration_sec ?? 6);
-  const snapped = snapToBeat(track, nominalEnd);
-  const end = Math.abs(snapped - nominalEnd) < 0.3 ? snapped : nominalEnd;
+  const end = wtsBeat?.end_sec ?? start + (beat.duration_sec ?? 6);
   beatTimings.push({ id: beat.id, start, end, duration: end - start, beat });
   prevEnd = end;
 }
-// Pad both ends so the video doesn't clip in/out mid-frame:
-//   • PRE_ROLL: photo shows clean for the first 0.5s before overlays slam in.
-//     Matches algo-specialist's "first 0.5s = single shocking visual, no chrome"
-//     guidance.
-//   • TAIL: hold last frame 1s past TTS end so the close lands smooth.
-const PRE_ROLL_SEC = 0.5;
-const TAIL_SEC = 1.0;
-const totalDuration = PRE_ROLL_SEC + prevEnd + TAIL_SEC;
-console.log(`Total duration: ${totalDuration.toFixed(2)}s (pre-roll ${PRE_ROLL_SEC}s + content ${prevEnd.toFixed(2)}s + tail ${TAIL_SEC}s) using track ${track.file}`);
+// All durations now come from the audio contract, not from local padding math.
+//   • PRE_ROLL: clean photo before the first word + overlays slam in.
+//   • TAIL: 0 — the post-verdict hold is the CTA window inside content time
+//     (= verdict_post_silence), not an extra tail. totalDuration === the exact
+//     length of the pre-built audio-final.m4a so video and audio end together.
+const PRE_ROLL_SEC = seg.pre_roll_sec ?? 0.5;
+const TAIL_SEC = 0;
+const totalDuration = seg.total_duration_sec;
+console.log(
+  `Total duration: ${totalDuration.toFixed(2)}s (pre-roll ${PRE_ROLL_SEC}s + content ${prevEnd.toFixed(2)}s) using track ${track.file}`,
+);
+console.log(
+  `Verdict word "${seg.verdict_word}" lands at ${seg.verdict_word_start_sec.toFixed(2)}s — music ends ${(PRE_ROLL_SEC + seg.body_end_content).toFixed(2)}s, clean air around it.`,
+);
 
 // ── Per-beat photo assignment ───────────────────────────────────────────────
 
@@ -210,57 +229,184 @@ for (let i = 1; i <= 5; i++) {
   overlayPaths.push(p);
 }
 
-// ── SFX cue list ────────────────────────────────────────────────────────────
-
-// Script-driven SFX disabled in v13. Per sound designer + user feedback:
-// random whooshes/buzzers/alarms at beat boundaries felt disconnected
-// from the visuals (no audio-visual punctuation). The sub-bass thump on
-// the verdict word is the only sonic accent we keep — it has a clear
-// visual partner (the PASS pill).
-const sfxCues = [];
-
-// ── Music + karaoke detection ───────────────────────────────────────────────
+// ── Music detection ─────────────────────────────────────────────────────────
 
 const musicPath = path.join(assetsDir, "music", track.file);
 const hasMusic = fs.existsSync(musicPath);
-if (!hasMusic) console.warn(`  ⚠ music bed missing: ${musicPath} — proceeding without`);
+if (!hasMusic)
+  console.warn(`  ⚠ music bed missing: ${musicPath} — proceeding without`);
 
 // Karaoke captions disabled in v8 — Studio voices don't expose word-level
-// timing (we'd have to estimate), and the captions kept colliding with the
-// design overlay text regardless of MarginV. The TTS voice carries the
-// narration on its own. Re-enable when we either:
-//   • Switch to a Wavenet/Neural2 voice (supports SSML marks for exact timing)
-//   • Upgrade to ElevenLabs (has word-level timing in their API)
+// timing and the captions collided with the design overlay text. The TTS
+// voice carries narration on its own. (Kept as a flag for the video graph.)
 const hasKaraoke = false;
 
-// ── FFmpeg invocation ───────────────────────────────────────────────────────
+// ── Audio pre-pass: build tmp/audio-final.m4a deterministically ──────────────
+//
+// The heart of the v15 structural fix. Instead of envelope-guessing where the
+// verdict word lands inside one narration file, we CONCATENATE measured clips
+// with literal silence so the assembled file IS the timeline:
+//
+//   [pre-roll] [hook][gap][setup][gap][catch][gap][math]
+//     [verdict pre-silence] [VERDICT WORD] [verdict post-silence]
+//
+// Music plays only under the body and is faded fully out before the verdict
+// pre-silence, so the verdict word + sub-bass thump ring in clean air. Every
+// offset comes from ffprobe-measured durations (not MP3 byte-size estimates),
+// so the word can never drift out of its window. The main video pass then
+// muxes this file verbatim — no audio filtergraph, nothing left to guess.
+function buildFinalAudio() {
+  const AF = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
+  const bodyClips = seg.body_clips;
+  const gaps = seg.body_gap_durs;
+  const preRoll = seg.pre_roll_sec;
+  const preSil = seg.verdict_pre_silence_sec;
+  const postSil = seg.verdict_post_silence_sec;
+  const bodyEnd = seg.body_end_content; // content-time end of body voice
+  const total = seg.total_duration_sec;
+  const musicEnd = preRoll + bodyEnd; // assembled time: music must be gone here
+
+  const inputs = ["-y"];
+  for (const c of bodyClips) inputs.push("-i", c);
+  const verdictInIdx = bodyClips.length;
+  inputs.push("-i", seg.verdict_clip);
+  let musicInIdx = -1;
+  if (hasMusic) {
+    musicInIdx = bodyClips.length + 1;
+    inputs.push("-i", musicPath);
+  }
+
+  const f = [];
+
+  // Voice track = lead silence ++ padded body clips ++ pre-silence ++ verdict
+  // (+ post-silence), concatenated in play order. Every segment is normalized
+  // to the same format + zero-based so the concat filter accepts them.
+  f.push(
+    `anullsrc=r=48000:cl=stereo,${AF},atrim=duration=${preRoll.toFixed(3)},asetpts=PTS-STARTPTS[lead]`,
+  );
+  const voiceLabels = ["[lead]"];
+  for (let i = 0; i < bodyClips.length; i++) {
+    const g = gaps[i] ?? 0;
+    const pad = g > 0 ? `,apad=pad_dur=${g.toFixed(3)}` : "";
+    f.push(`[${i}:a]${AF}${pad},asetpts=PTS-STARTPTS[b${i}]`);
+    voiceLabels.push(`[b${i}]`);
+  }
+  f.push(
+    `anullsrc=r=48000:cl=stereo,${AF},atrim=duration=${preSil.toFixed(3)},asetpts=PTS-STARTPTS[presil]`,
+  );
+  voiceLabels.push("[presil]");
+  f.push(
+    `[${verdictInIdx}:a]${AF},apad=pad_dur=${postSil.toFixed(3)},asetpts=PTS-STARTPTS[verd]`,
+  );
+  voiceLabels.push("[verd]");
+  f.push(
+    `${voiceLabels.join("")}concat=n=${voiceLabels.length}:v=0:a=1[voiceraw]`,
+  );
+  // Lock the voice track to the exact contract length (guard FP/decoder drift).
+  f.push(`[voiceraw]apad=pad_dur=0.5,atrim=duration=${total.toFixed(3)}[voice]`);
+
+  const mixLabels = ["[voice]"];
+
+  // Music: gentle bed under the body, ducked harder through CATCH, then faded
+  // fully out by musicEnd and hard-trimmed so NOTHING plays over the verdict.
+  if (hasMusic) {
+    const [cs, ce] = seg.catch_window_content;
+    const catchStart = (cs + preRoll).toFixed(3);
+    const catchEnd = (ce + preRoll).toFixed(3);
+    const fadeStart = Math.max(0, musicEnd - 0.5).toFixed(3);
+    f.push(
+      `[${musicInIdx}:a]aloop=loop=-1:size=2e+09,${AF},` +
+        `volume=enable='not(between(t,${catchStart},${catchEnd}))':volume=0.12,` +
+        `volume=enable='between(t,${catchStart},${catchEnd})':volume=0.07,` +
+        `afade=out:st=${fadeStart}:d=0.5,atrim=duration=${musicEnd.toFixed(3)}[music]`,
+    );
+    mixLabels.push("[music]");
+  }
+
+  // Sub-bass thump fired 50ms before the verdict word — its only sonic partner,
+  // landing in the music-free pocket. 90Hz fundamental + 180Hz overtone so
+  // phone speakers (which can't reproduce <150Hz) still feel the impact.
+  const thumpStart = Math.max(0, seg.verdict_word_start_sec - 0.05);
+  const thumpMs = Math.floor(thumpStart * 1000);
+  const tone = "0.7*sin(2*PI*90*t)+0.4*sin(2*PI*180*t)";
+  f.push(
+    `aevalsrc='${tone}|${tone}':channel_layout=stereo:sample_rate=48000:duration=0.45,` +
+      `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+      `afade=in:st=0:d=0.05,afade=out:st=0.40:d=0.05,lowpass=f=300,` +
+      `adelay=${thumpMs}|${thumpMs},volume=1.2[thump]`,
+  );
+  mixLabels.push("[thump]");
+
+  // normalize=0 → pure sum (no per-input attenuation when music ends early),
+  // then dynaudnorm to lift level while preserving the designed silences/boosts.
+  f.push(
+    `${mixLabels.join("")}amix=inputs=${mixLabels.length}:duration=first:normalize=0,` +
+      `dynaudnorm=f=300:g=11[aout]`,
+  );
+
+  const args = [
+    ...inputs,
+    "-filter_complex",
+    f.join(";"),
+    "-map",
+    "[aout]",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "48000",
+    path.join(tmpDir, "audio-final.m4a"),
+  ];
+  console.log(
+    "\n[audio pre-pass] ffmpeg " +
+      args.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" "),
+  );
+  const r = spawnSync("ffmpeg", args, {
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  if (r.error) {
+    console.error(`audio pre-pass spawn error: ${r.error.message}`);
+    process.exit(1);
+  }
+  if (r.status !== 0) {
+    console.error(
+      `audio pre-pass failed status=${r.status} signal=${r.signal}`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `✓ tmp/audio-final.m4a built — ${total.toFixed(2)}s, verdict "${seg.verdict_word}" @ ${seg.verdict_word_start_sec.toFixed(2)}s`,
+  );
+}
+
+buildFinalAudio();
+
+// ── FFmpeg invocation (video pass) ──────────────────────────────────────────
+//
+// Audio is already fully built (tmp/audio-final.m4a). This pass renders the
+// video filtergraph and muxes that audio file in verbatim — there is no audio
+// filtergraph here at all, so nothing about the verdict timing can change.
 
 const args = [
   "-y",
   // Input 0: photo concat → canvas video stream
   "-f", "concat", "-safe", "0", "-i", concatList,
-  // Input 1: narration MP3
-  "-i", path.join(tmpDir, "narration.mp3"),
 ];
 
-let nextInputIdx = 2;
+let nextInputIdx = 1;
 const overlayInputIndices = [];
 for (const p of overlayPaths) {
   overlayInputIndices.push(nextInputIdx++);
-  // `-t` bounds the looped still so the fade filter can compute
-  // alpha durations correctly (otherwise ffmpeg 6.x throws
-  // "Error reinitializing filters" on infinite-duration inputs).
+  // `-t` bounds the looped still so the fade filter can compute alpha
+  // durations correctly (ffmpeg 6.x throws "Error reinitializing filters"
+  // on infinite-duration inputs otherwise).
   args.push("-loop", "1", "-t", totalDuration.toFixed(3), "-i", p);
 }
 
-const musicIdx = hasMusic ? nextInputIdx++ : -1;
-if (hasMusic) args.push("-i", musicPath);
-
-const sfxIndices = [];
-for (const cue of sfxCues) {
-  sfxIndices.push({ idx: nextInputIdx++, at: cue.at });
-  args.push("-i", cue.path);
-}
+// Final input: the deterministic pre-built audio. Muxed with -c:a copy.
+const audioFinalIdx = nextInputIdx++;
+args.push("-i", path.join(tmpDir, "audio-final.m4a"));
 
 // Video filter graph:
 //   1. Scale photo stream to 1080×1920 (cover), apply Ken Burns zoom
@@ -340,111 +486,18 @@ const fadeStart = Math.max(0, totalDuration - 0.5);
 filters.push(`${vmap}fade=t=out:st=${fadeStart.toFixed(3)}:d=0.5[vfade]`);
 vmap = "[vfade]";
 
-// Verdict-moment timing (v11): all 4 video-craft experts independently
-// converged on the same single moment — the verdict word needs SILENCE
-// around it + a sub-bass thump under it.
-//
-// Assumption: TTS verdict word ("Walk." "Pass.") lands in the final
-// ~0.45s of beat 4. We define a silence window from -0.30s before to
-// +0.20s after the verdict word, and trigger a 0.45s sub-bass tone
-// under the word itself.
-//
-// IMPORTANT: declared BEFORE audioChunks because the TTS volume-envelope
-// references silenceStart/silenceEnd. Hoisting them avoids the TDZ
-// "Cannot access 'silenceStart' before initialization" ReferenceError.
-const verdictBeat = beatTimings[3]; // VERDICT is the 4th beat (index 3)
-const verdictWordStart = verdictBeat.end - 0.45 + PRE_ROLL_SEC;
-const verdictWordEnd = verdictBeat.end + PRE_ROLL_SEC;
-const silenceStart = verdictWordStart - 0.30;
-const silenceEnd = verdictWordEnd + 0.20;
-
-// Audio mix:
-//   • Pad TTS with PRE_ROLL_SEC of leading silence so the narration doesn't
-//     start mid-word.
-//   • Fade out the music in the last ~0.6s of the tail.
-//   • Boost TTS volume during the verdict silence window so the verdict
-//     word LANDS instead of disappearing into the dropped music.
-const audioFadeStart = Math.max(0, totalDuration - 0.6);
-const audioChunks = [
-  `[1:a]adelay=${Math.floor(PRE_ROLL_SEC * 1000)}|${Math.floor(PRE_ROLL_SEC * 1000)},` +
-  `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=2.0,` +
-  `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=1.0[a_tts]`,
-];
-
-if (hasMusic) {
-  // Shift CATCH duck window by PRE_ROLL_SEC since the timeline shifted.
-  const catchStart = catchTiming ? catchTiming.start + PRE_ROLL_SEC : 0;
-  const catchEnd = catchTiming ? catchTiming.end + PRE_ROLL_SEC : 0;
-  // Music volume:
-  //   • During CATCH: duck to 25% (TTS rides above)
-  //   • During verdict silence window: -inf (let the word breathe)
-  //   • Otherwise: 13% baseline bed
-  // Compose music volume expression as a SINGLE quoted enable per volume
-  // filter. ffmpeg evaluates `enable` as a numeric expression where 0=off,
-  // nonzero=on. Multiple conditions combine via multiplication (*).
-  // Order matters: later volume= entries override earlier ones for the
-  // overlapping windows. Apply silence LAST so it wins on the verdict.
-  const baseline = catchTiming
-    ? `volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13,` +
-      `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.25`
-    : `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`;
-  const duckExpr =
-    `${baseline},` +
-    `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=0.0`;
-  audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.6,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
-}
-
-// Sub-bass thump under the verdict word. Generated via ffmpeg's aevalsrc
-// (no SFX file needed) — a low-pass'd sine burst at 55Hz, 0.45s, with a
-// fast attack and slow decay envelope. Triggers 50ms before verdict word
-// so the impact lands ON the word.
-const thumpStart = Math.max(0, verdictWordStart - 0.05);
-const thumpInputIdx = nextInputIdx++;
-args.push(
-  "-f", "lavfi",
-  "-t", "0.45",
-  // Layered thump: 90Hz fundamental + 180Hz overtone so phone speakers
-  // (which can't reproduce <150Hz) still hear the impact. Low-pass at
-  // 300Hz keeps it out of voice formant territory but allows the
-  // 180Hz harmonic to reach standard phone driver range.
-  "-i", "aevalsrc='0.7*sin(2*PI*90*t) + 0.4*sin(2*PI*180*t)':sample_rate=48000:duration=0.45",
-);
-// Envelope via afade: 50ms attack + 50ms release on a 0.45s tone.
-// Volume bumped to 1.2 so the thump actually lands on phone speakers.
-audioChunks.push(
-  `[${thumpInputIdx}:a]afade=in:st=0:d=0.05,afade=out:st=0.4:d=0.05,lowpass=f=300,adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},volume=1.2[a_thump]`,
-);
-for (let i = 0; i < sfxIndices.length; i++) {
-  const s = sfxIndices[i];
-  // Shift SFX cues by PRE_ROLL_SEC so they land at the right beat moment.
-  const at = s.at + PRE_ROLL_SEC;
-  audioChunks.push(
-    `[${s.idx}:a]adelay=${Math.floor(at * 1000)}|${Math.floor(at * 1000)},volume=0.7[a_sfx${i}]`,
-  );
-}
-const audioLabels = ["[a_tts]"];
-if (hasMusic) audioLabels.push("[a_music]");
-audioLabels.push("[a_thump]"); // v11: sub-bass thump under verdict word
-for (let i = 0; i < sfxIndices.length; i++) audioLabels.push(`[a_sfx${i}]`);
-// Loudnorm to -14 LUFS (Shorts shelf broadcast target). Without this the
-// video sounds thin sandwiched between TikTok-imports averaging -8 LUFS.
-// Use dynaudnorm instead of loudnorm — dynaudnorm respects intentional
-// volume design (silences stay silent, boosts stay boosted) whereas
-// loudnorm's dynamic mode was equalizing the verdict-moment polish away.
-audioChunks.push(
-  `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,dynaudnorm=f=300:g=11,atrim=duration=${totalDuration.toFixed(3)}[aout]`,
-);
-
-filters.push(audioChunks.join(";"));
-
+// Audio is already finalized in tmp/audio-final.m4a (the deterministic
+// pre-pass above). Mux it in with -c:a copy — no audio filtergraph here, so
+// the verdict word's baked-in position is final and unguessable. filters
+// holds ONLY the video graph at this point.
 args.push(
   "-filter_complex", filters.join(";"),
   "-map", vmap,
-  "-map", "[aout]",
+  "-map", `${audioFinalIdx}:a`,
   "-c:v", "libx264", "-preset", "medium", "-crf", "23",
   "-pix_fmt", "yuv420p",
   "-movflags", "+faststart",
-  "-c:a", "aac", "-b:a", "128k",
+  "-c:a", "copy",
   "-r", "30",
   "-t", totalDuration.toFixed(3),
   path.join(tmpDir, "video.mp4"),
