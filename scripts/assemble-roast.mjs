@@ -398,13 +398,16 @@ const thumpInputIdx = nextInputIdx++;
 args.push(
   "-f", "lavfi",
   "-t", "0.45",
-  "-i", "aevalsrc='0.55*sin(2*PI*55*t)':sample_rate=48000:duration=0.45",
+  // Layered thump: 90Hz fundamental + 180Hz overtone so phone speakers
+  // (which can't reproduce <150Hz) still hear the impact. Low-pass at
+  // 300Hz keeps it out of voice formant territory but allows the
+  // 180Hz harmonic to reach standard phone driver range.
+  "-i", "aevalsrc='0.7*sin(2*PI*90*t) + 0.4*sin(2*PI*180*t)':sample_rate=48000:duration=0.45",
 );
 // Envelope via afade: 50ms attack + 50ms release on a 0.45s tone.
-// Simpler + more reliable than expression-based volume (which was
-// throwing NaN on filter init).
+// Volume bumped to 1.2 so the thump actually lands on phone speakers.
 audioChunks.push(
-  `[${thumpInputIdx}:a]afade=in:st=0:d=0.05,afade=out:st=0.4:d=0.05,lowpass=f=180,adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},volume=0.7[a_thump]`,
+  `[${thumpInputIdx}:a]afade=in:st=0:d=0.05,afade=out:st=0.4:d=0.05,lowpass=f=300,adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},volume=1.2[a_thump]`,
 );
 for (let i = 0; i < sfxIndices.length; i++) {
   const s = sfxIndices[i];
