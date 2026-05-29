@@ -349,15 +349,51 @@ vmap = "[vfade]";
 //   • Fade out the music in the last ~0.6s of the tail.
 const audioFadeStart = Math.max(0, totalDuration - 0.6);
 const audioChunks = [`[1:a]adelay=${Math.floor(PRE_ROLL_SEC * 1000)}|${Math.floor(PRE_ROLL_SEC * 1000)},volume=1.0[a_tts]`];
+// Verdict-moment timing (v11): all 4 video-craft experts independently
+// converged on the same single moment — the verdict word needs SILENCE
+// around it + a sub-bass thump under it.
+//
+// Assumption: TTS verdict word ("Walk." "Pass.") lands in the final
+// ~0.45s of beat 4. We define a silence window from -0.30s before to
+// +0.20s after the verdict word, and trigger a 0.45s sub-bass tone
+// under the word itself.
+const verdictBeat = beatTimings[3]; // VERDICT is the 4th beat (index 3)
+const verdictWordStart = verdictBeat.end - 0.45 + PRE_ROLL_SEC;
+const verdictWordEnd = verdictBeat.end + PRE_ROLL_SEC;
+const silenceStart = verdictWordStart - 0.30;
+const silenceEnd = verdictWordEnd + 0.20;
+
 if (hasMusic) {
   // Shift CATCH duck window by PRE_ROLL_SEC since the timeline shifted.
   const catchStart = catchTiming ? catchTiming.start + PRE_ROLL_SEC : 0;
   const catchEnd = catchTiming ? catchTiming.end + PRE_ROLL_SEC : 0;
-  const duckExpr = catchTiming
-    ? `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})':volume=0.25,volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))':volume=0.13`
-    : "volume=0.13";
+  // Music volume:
+  //   • During CATCH: duck to 25% (TTS rides above)
+  //   • During verdict silence window: -inf (let the word breathe)
+  //   • Otherwise: 13% baseline bed
+  const duckExpr =
+    `volume=enable='between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)})':volume=0.0,` +
+    (catchTiming
+      ? `volume=enable='between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)})':volume=0.25,` +
+        `volume=enable='not(between(t,${catchStart.toFixed(3)},${catchEnd.toFixed(3)}))'+'*not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`
+      : `volume=enable='not(between(t,${silenceStart.toFixed(3)},${silenceEnd.toFixed(3)}))':volume=0.13`);
   audioChunks.push(`[${musicIdx}:a]aloop=loop=-1:size=2e+09,${duckExpr},afade=out:st=${audioFadeStart.toFixed(3)}:d=0.6,atrim=duration=${totalDuration.toFixed(3)}[a_music]`);
 }
+
+// Sub-bass thump under the verdict word. Generated via ffmpeg's aevalsrc
+// (no SFX file needed) — a low-pass'd sine burst at 55Hz, 0.45s, with a
+// fast attack and slow decay envelope. Triggers 50ms before verdict word
+// so the impact lands ON the word.
+const thumpStart = Math.max(0, verdictWordStart - 0.05);
+const thumpInputIdx = nextInputIdx++;
+args.push(
+  "-f", "lavfi",
+  "-t", "0.45",
+  "-i", "aevalsrc='0.55*sin(2*PI*55*t)':sample_rate=48000:duration=0.45",
+);
+audioChunks.push(
+  `[${thumpInputIdx}:a]volume='if(lt(t,0.05),t/0.05,if(lt(t,0.4),1-((t-0.05)/0.35)*0.3,0.7-((t-0.4)/0.05)*0.7))',adelay=${Math.floor(thumpStart * 1000)}|${Math.floor(thumpStart * 1000)},lowpass=f=180,volume=0.55[a_thump]`,
+);
 for (let i = 0; i < sfxIndices.length; i++) {
   const s = sfxIndices[i];
   // Shift SFX cues by PRE_ROLL_SEC so they land at the right beat moment.
@@ -368,6 +404,7 @@ for (let i = 0; i < sfxIndices.length; i++) {
 }
 const audioLabels = ["[a_tts]"];
 if (hasMusic) audioLabels.push("[a_music]");
+audioLabels.push("[a_thump]"); // v11: sub-bass thump under verdict word
 for (let i = 0; i < sfxIndices.length; i++) audioLabels.push(`[a_sfx${i}]`);
 // Loudnorm to -14 LUFS (Shorts shelf broadcast target). Without this the
 // video sounds thin sandwiched between TikTok-imports averaging -8 LUFS.
