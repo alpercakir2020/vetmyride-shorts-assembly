@@ -69,13 +69,17 @@ jobs:
       - name: Build karaoke subs
         run: node scripts/karaoke-subs.mjs
 
-      # ── Format A: Roast ─────────────────────────────────────────────────
-      - name: Render Satori slides (Format A)
-        if: steps.format.outputs.value == 'roast'
+      # ── Format A: Roast | Format C: Steal ───────────────────────────────
+      # Roast + Steal share the photo-canvas pipeline. The Satori overlay
+      # endpoint is format-aware (passes ?format= through), so render-slides
+      # picks the right source table. assemble-roast.mjs writes the same
+      # tmp/video.mp4 + tmp/duration.txt for both formats.
+      - name: Render Satori slides (Roast / Steal)
+        if: steps.format.outputs.value == 'roast' || steps.format.outputs.value == 'steal'
         run: node scripts/render-slides.mjs
 
-      - name: Assemble roast video
-        if: steps.format.outputs.value == 'roast'
+      - name: Assemble video (Roast / Steal)
+        if: steps.format.outputs.value == 'roast' || steps.format.outputs.value == 'steal'
         run: node scripts/assemble-roast.mjs
 
       # ── Format B: Walkthrough ───────────────────────────────────────────
