@@ -81,7 +81,19 @@ jobs:
       # ── Format B: Walkthrough ───────────────────────────────────────────
       - name: Capture report sections (Format B)
         if: steps.format.outputs.value == 'walkthrough'
-        run: node scripts/capture-report.mjs
+        # Ubuntu-latest runners ship Google Chrome (`/usr/bin/google-chrome`)
+        # but NOT chromium — capture-report.mjs's default `chromium` binary
+        # lookup fails. Point it at google-chrome via env: the script accepts
+        # CHROMIUM_PATH override and all flags it uses (--headless=new,
+        # --screenshot, --virtual-time-budget, --window-size) are honored by
+        # both binaries. Verifies the binary exists before invoking so a
+        # missing dependency fails loudly instead of with a generic exit code.
+        env:
+          CHROMIUM_PATH: google-chrome
+        run: |
+          which google-chrome || { echo "google-chrome not on PATH — runner image change?"; exit 1; }
+          google-chrome --version
+          node scripts/capture-report.mjs
 
       - name: Assemble walkthrough video
         if: steps.format.outputs.value == 'walkthrough'
