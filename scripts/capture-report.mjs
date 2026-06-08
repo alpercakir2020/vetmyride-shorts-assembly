@@ -1,18 +1,20 @@
-// Format B (Walkthrough) capture: take a SINGLE full-page screenshot of
-// the report at 1080 width and 8000 height (Chrome viewport equals
-// window-size, so the entire page renders in one shot). The assembler
-// uses ffmpeg cropdetect to trim trailing whitespace and then animates
-// a 1080×1920 camera scrolling through the tall image — making the
-// "Walkthrough" format actually look like a walkthrough instead of
-// 5 isolated module screenshots.
+// Format B (Walkthrough) capture:
 //
-// REVISION 2026-06-08 (S49 mid-fix): the previous flow captured 5
-// separate /m/[id]?capture=1&section=X screenshots and stitched them
-// into a slideshow. Result was visually dull / empty — each beat was a
-// single ReportView module on white background, no movement. The new
-// flow shows the whole report top-to-bottom in motion.
+//   1. Full-page screenshot of the report at 1080 width (Chrome viewport
+//      equals window-size — entire page renders in one shot). Trimmed via
+//      ffmpeg cropdetect to remove trailing whitespace.
+//   2. Auction photos from /api/youtube/photos?report_id=<id>. Used as
+//      the opener segment so the viewer sees the actual car before the
+//      report scroll starts. Solves the "visually empty" complaint.
 //
-// Output: tmp/screens/report-full.png
+// REVISION 2026-06-08 (S49 + photos fix): walkthrough was just a single
+// scrolling screenshot. Adding photos gives the format a hook + a
+// document feel.
+//
+// Outputs:
+//   tmp/screens/report-full.png            (trimmed full-page report)
+//   tmp/screens/report-meta.json           ({width, height, photo_count})
+//   tmp/photos/photo-{0..N}.jpg            (auction photos, up to 5)
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -29,19 +31,19 @@ if (row.format !== "walkthrough") {
 const reportId = row.source_slug;
 
 const screensDir = path.join(process.cwd(), "tmp", "screens");
+const photosDir = path.join(process.cwd(), "tmp", "photos");
 fs.mkdirSync(screensDir, { recursive: true });
+fs.mkdirSync(photosDir, { recursive: true });
+
+// ── 1. Full-page report screenshot ─────────────────────────────────────────
 
 const chromium = process.env.CHROMIUM_PATH ?? "chromium";
 const url = `${SITE_URL}/m/${reportId}?capture=1`;
-const outPath = path.join(screensDir, "report-full.png");
+const reportPath = path.join(screensDir, "report-full.png");
 
-console.log(`Capturing full report → ${outPath}`);
+console.log(`Capturing full report → ${reportPath}`);
 console.log(`  URL: ${url}`);
 
-// Chrome captures whatever fits in the viewport. Set viewport very tall
-// (1080×8000) so the entire report renders in one frame. Reports tend to
-// run 4000-6500px tall depending on lot data; 8000 is generous. Trailing
-// whitespace is trimmed below by ffmpeg cropdetect.
 const res = spawnSync(
   chromium,
   [
@@ -50,10 +52,7 @@ const res = spawnSync(
     "--no-sandbox",
     "--hide-scrollbars",
     "--window-size=1080,8000",
-    `--screenshot=${outPath}`,
-    // Long virtual-time-budget: the report fetches data client-side from
-    // Supabase and renders many modules. 12s is enough for cold-start
-    // hydration on a fresh deploy + image lazy-loading to settle.
+    `--screenshot=${reportPath}`,
     "--virtual-time-budget=12000",
     url,
   ],
@@ -64,26 +63,18 @@ if (res.status !== 0) {
   console.error(`  ✗ chromium failed (code ${res.status})`);
   process.exit(1);
 }
-
-if (!fs.existsSync(outPath)) {
+if (!fs.existsSync(reportPath)) {
   console.error(`  ✗ screenshot file missing after chromium returned 0`);
   process.exit(1);
 }
+console.log(`  ✓ captured (${(fs.statSync(reportPath).size / 1024).toFixed(1)} KB)`);
 
-const stat = fs.statSync(outPath);
-console.log(`  ✓ captured (${(stat.size / 1024).toFixed(1)} KB)`);
-
-// ── Trim trailing whitespace via ffmpeg cropdetect ──────────────────────────
-//
-// cropdetect scans for the bounding box of non-background pixels. Run it on
-// the still image (one frame) and parse the suggested crop= line. If
-// detection fails, we fall back to the raw 8000px image and the assembler
-// will pan over it as-is (trailing whitespace at the end of the video).
+// Trim trailing whitespace via cropdetect.
 const probe = spawnSync(
   "ffmpeg",
   [
     "-v", "info",
-    "-i", outPath,
+    "-i", reportPath,
     "-vf", "cropdetect=limit=240:round=2:reset=0",
     "-frames:v", "1",
     "-f", "null", "-",
@@ -96,13 +87,11 @@ if (m) {
   const cropW = parseInt(m[1], 10);
   const cropH = parseInt(m[2], 10);
   console.log(`  detected content bounds: ${cropW}×${cropH}`);
-
-  // Re-encode with the detected crop so the assembler reads a clean image.
   const trimmedPath = path.join(screensDir, "report-full-trimmed.png");
   const trim = spawnSync(
     "ffmpeg",
     [
-      "-y", "-i", outPath,
+      "-y", "-i", reportPath,
       "-vf", `crop=${cropW}:${cropH}:${m[3]}:${m[4]}`,
       "-frames:v", "1",
       trimmedPath,
@@ -110,7 +99,7 @@ if (m) {
     { stdio: "inherit" },
   );
   if (trim.status === 0 && fs.existsSync(trimmedPath)) {
-    fs.renameSync(trimmedPath, outPath);
+    fs.renameSync(trimmedPath, reportPath);
     console.log(`  ✓ trimmed to ${cropW}×${cropH}`);
   } else {
     console.warn(`  ⚠ trim failed — using raw 1080×8000 image`);
@@ -119,7 +108,6 @@ if (m) {
   console.warn(`  ⚠ cropdetect produced no crop=... line — using raw image`);
 }
 
-// Sanity-check final dimensions for the assembler.
 const finalProbe = spawnSync(
   "ffprobe",
   [
@@ -127,15 +115,67 @@ const finalProbe = spawnSync(
     "-select_streams", "v:0",
     "-show_entries", "stream=width,height",
     "-of", "csv=p=0",
-    outPath,
+    reportPath,
   ],
   { encoding: "utf8" },
 );
-const [finalW, finalH] = (finalProbe.stdout || "").trim().split(",").map((n) => parseInt(n, 10));
-console.log(`✓ report-full.png ready: ${finalW}×${finalH}`);
+const [reportW, reportH] = (finalProbe.stdout || "").trim().split(",").map((n) => parseInt(n, 10));
+console.log(`✓ report-full.png ready: ${reportW}×${reportH}`);
 
-// Sidecar manifest so the assembler doesn't have to ffprobe again.
+// ── 2. Auction photos ──────────────────────────────────────────────────────
+//
+// Walkthrough source_slug is a report UUID. /api/youtube/photos?report_id=
+// pulls from reports.photo_urls directly. Up to 5 photos cap matches the
+// roast pipeline so the visual rotation feels familiar.
+
+const PHOTO_CAP = 5;
+const downloadedPhotos = [];
+try {
+  const photosUrl = `${SITE_URL}/api/youtube/photos?report_id=${encodeURIComponent(reportId)}`;
+  console.log(`\nFetching auction photos from ${photosUrl}`);
+  const photosRes = await fetch(photosUrl);
+  if (!photosRes.ok) {
+    console.warn(`  ⚠ photos endpoint ${photosRes.status} — walkthrough will skip the photo opener`);
+  } else {
+    const manifest = await photosRes.json();
+    const urls = (manifest.photos ?? []).slice(0, PHOTO_CAP);
+    for (let i = 0; i < urls.length; i++) {
+      try {
+        const dl = await fetch(urls[i]);
+        if (!dl.ok) {
+          console.warn(`  ⚠ photo ${i} skipped: ${dl.status}`);
+          continue;
+        }
+        const buf = Buffer.from(await dl.arrayBuffer());
+        const outPath = path.join(photosDir, `photo-${i}.jpg`);
+        fs.writeFileSync(outPath, buf);
+        downloadedPhotos.push(outPath);
+        console.log(`  ✓ photo ${i} → ${(buf.length / 1024).toFixed(1)} KB`);
+      } catch (err) {
+        console.warn(`  ⚠ photo ${i} fetch failed: ${err.message}`);
+      }
+    }
+  }
+} catch (err) {
+  console.warn(`  ⚠ photo fetch errored: ${err.message}`);
+}
+
+// ── Sidecar manifest ───────────────────────────────────────────────────────
+
 fs.writeFileSync(
   path.join(screensDir, "report-meta.json"),
-  JSON.stringify({ width: finalW, height: finalH }, null, 2),
+  JSON.stringify(
+    {
+      width: reportW,
+      height: reportH,
+      photo_count: downloadedPhotos.length,
+      photos: downloadedPhotos,
+    },
+    null,
+    2,
+  ),
+);
+
+console.log(
+  `\n✓ Walkthrough assets ready — report ${reportW}×${reportH} + ${downloadedPhotos.length} photo(s)`,
 );
