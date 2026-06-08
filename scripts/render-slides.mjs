@@ -37,15 +37,18 @@ fs.mkdirSync(photosDir, { recursive: true });
 
 // ── Fetch Satori overlays ──────────────────────────────────────────────────
 
+// Walkthrough has its own endpoint. Roast + Steal share /api/og/youtube-slide
+// which is format-aware (added S49 2026-06-08 for Steal — data source and
+// beat-3 chip styling branch on the ?format= param).
 const endpoint =
   format === "walkthrough"
     ? "youtube-walkthrough-slide"
     : "youtube-slide";
 
-console.log(`Fetching ${beatCount} overlays from ${SITE_URL}/api/og/${endpoint}`);
+console.log(`Fetching ${beatCount} overlays from ${SITE_URL}/api/og/${endpoint} (format=${format})`);
 
 for (let beat = 1; beat <= beatCount; beat++) {
-  const url = `${SITE_URL}/api/og/${endpoint}?slug=${encodeURIComponent(slug)}&beat=${beat}`;
+  const url = `${SITE_URL}/api/og/${endpoint}?slug=${encodeURIComponent(slug)}&beat=${beat}&format=${format}`;
   const res = await fetch(url);
   if (!res.ok) {
     console.error(`  ✗ overlay ${beat}: ${res.status} ${await res.text()}`);
