@@ -82,12 +82,16 @@ for (let i = 0; i < beats.length; i++) {
 }
 // All durations now come from the audio contract, not from local padding math.
 //   • PRE_ROLL: clean photo before the first word + overlays slam in.
-//   • TAIL: 0 — the post-verdict hold is the CTA window inside content time
-//     (= verdict_post_silence), not an extra tail. totalDuration === the exact
-//     length of the pre-built audio-final.m4a so video and audio end together.
+//   • TAIL: a silent hold on the final FOLLOW frame. The CTA is a SUBSCRIBE
+//     ASK now (not a sign-off) — viewers need time to read the card AND tap
+//     follow, but the TTS-driven CTA beat is only ~3s. The tail is appended
+//     AFTER all spoken content + the verdict word, so it never touches the
+//     audio contract (verdict levels / music fade are unchanged). The last
+//     canvas segment (line ~210) and the CTA overlay (line ~503) both hold
+//     through it; the voice track is padded with silence to match (line ~343).
 const PRE_ROLL_SEC = seg.pre_roll_sec ?? 0.5;
-const TAIL_SEC = 0;
-const totalDuration = seg.total_duration_sec;
+const TAIL_SEC = 2.5;
+const totalDuration = seg.total_duration_sec + TAIL_SEC;
 console.log(
   `Total duration: ${totalDuration.toFixed(2)}s (pre-roll ${PRE_ROLL_SEC}s + content ${prevEnd.toFixed(2)}s) using track ${track.file}`,
 );
@@ -339,8 +343,13 @@ function buildFinalAudio() {
   f.push(
     `${voiceLabels.join("")}concat=n=${voiceLabels.length}:v=0:a=1[voiceraw]`,
   );
-  // Lock the voice track to the exact contract length (guard FP/decoder drift).
-  f.push(`[voiceraw]apad=pad_dur=0.5,atrim=duration=${total.toFixed(3)}[voice]`);
+  // Lock the voice track to the contract length + the silent CTA hold tail.
+  // The pad is pure silence appended AFTER the verdict + post-silence, so the
+  // verdict word's baked-in level/position is untouched — it just keeps the
+  // muxed audio as long as the held video (FOLLOW frame) so ffmpeg's -t
+  // doesn't cut to a shorter audio stream.
+  const finalLen = total + TAIL_SEC;
+  f.push(`[voiceraw]apad=pad_dur=${(0.5 + TAIL_SEC).toFixed(3)},atrim=duration=${finalLen.toFixed(3)}[voice]`);
 
   const mixLabels = ["[voice]"];
 
@@ -498,9 +507,12 @@ let prev = "[bg]";
 for (let i = 0; i < overlayPaths.length; i++) {
   const t = beatTimings[i];
   // Shift overlay times by PRE_ROLL_SEC since the canvas now has a leading
-  // photo-only window.
+  // photo-only window. The LAST overlay (CTA / FOLLOW card) holds through the
+  // silent TAIL so the subscribe ask stays readable + tappable; every other
+  // overlay ends at its beat boundary.
+  const isLastBeat = i === overlayPaths.length - 1;
   const ovStart = t.start + PRE_ROLL_SEC;
-  const ovEnd = t.end + PRE_ROLL_SEC;
+  const ovEnd = t.end + PRE_ROLL_SEC + (isLastBeat ? TAIL_SEC : 0);
   const inputIdx = overlayInputIndices[i];
   const overlayInTag = `[ov${i}_fx]`;
   filters.push(
